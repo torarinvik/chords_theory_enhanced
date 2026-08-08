@@ -9,31 +9,37 @@
 namespace theory
 {
 
+// Qualities in the algorithmic next-chord catalogue (root-position).
 enum class TriadQuality
 {
     Major,
     Minor,
     Diminished,
-    Augmented
+    Augmented,
+    Sus2,
+    Sus4,
+    Power,       // root + fifth
+    Major7,      // 1 3 5 7
+    Minor7,      // 1 b3 5 b7
+    Dominant7,   // 1 3 5 b7
+    HalfDim7     // 1 b3 b5 b7  (m7b5)
 };
 
-// Algorithmic catalogue of all 48 common triads (12 roots × major/minor/dim/aug).
-// Spelling prefers accidentals that fit the given key when provided.
+// Catalogue of common sonorities on every chromatic root (triads, sus, power, sevenths).
 class TriadLibrary
 {
 public:
     static constexpr int kNumRoots = 12;
-    static constexpr int kNumQualities = 4;
-    static constexpr int kNumTriads = kNumRoots * kNumQualities; // 48
+    static constexpr int kNumQualities = 11;
+    static constexpr int kNumNamedChords = kNumRoots * kNumQualities; // 132
 
-    // Builds every triad once. rootSpellKey only affects note/symbol spelling (enharmonics).
     static std::vector<Chord> allTriads(Key rootSpellKey = Key::C);
 
     static Chord makeTriad(int rootPitchClass, TriadQuality quality, Key rootSpellKey = Key::C);
 
-    static int qualityThirdInterval(TriadQuality quality);  // semitones above root
-    static int qualityFifthInterval(TriadQuality quality); // semitones above root
-    static std::string qualitySuffix(TriadQuality quality); // "", "m", "dim", "aug"
+    static std::vector<int> qualityIntervals(TriadQuality quality);
+    static std::string qualitySuffix(TriadQuality quality);
+    static ChordType chordTypeForQuality(TriadQuality quality);
 };
 
 }

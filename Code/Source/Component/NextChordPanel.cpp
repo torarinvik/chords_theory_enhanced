@@ -1,5 +1,7 @@
 #include "Component/NextChordPanel.h"
 
+#include <cmath>
+
 #include "Theory/ChordDatabase.h"
 #include "Theory/NextChordGenerator.h"
 
@@ -171,10 +173,31 @@ NextChordPanel::NextChordPanel(const std::string& identifier):
 {
     addAndMakeVisible(_title);
     addAndMakeVisible(_currentLabel);
+    addAndMakeVisible(_dramaLabel);
+    addAndMakeVisible(_dramaLowLabel);
+    addAndMakeVisible(_dramaHighLabel);
+    addAndMakeVisible(_dramaSlider);
     addAndMakeVisible(_viewport);
 
     _title.setFontSize(nui::Theme::LABEL);
     _currentLabel.setFontSize(nui::Theme::SMALL);
+    _dramaLabel.setFontSize(nui::Theme::SMALL);
+    _dramaLowLabel.setFontSize(nui::Theme::SMALL);
+    _dramaHighLabel.setFontSize(nui::Theme::SMALL);
+
+    _dramaSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    _dramaSlider.setTextBoxStyle(juce::Slider::NoTextBox, true, 0, 0);
+    _dramaSlider.setRange(0.0, 1.0, 0.01);
+    _dramaSlider.setValue(static_cast<double>(_drama01), juce::dontSendNotification);
+    _dramaSlider.setMouseDragSensitivity(160);
+    _dramaSlider.setColour(juce::Slider::trackColourId,
+                           nui::Theme::newColor(nui::Theme::BACKGROUND).asJuce());
+    _dramaSlider.setColour(juce::Slider::thumbColourId,
+                           nui::Theme::newColor(nui::Theme::SECONDARY_ACCENT).asJuce());
+    _dramaSlider.setColour(juce::Slider::backgroundColourId,
+                           nui::Theme::newColor(nui::Theme::BACKGROUND).asJuce().withAlpha(0.45f));
+    _dramaSlider.setTooltip(juce::translate("next_chord_drama_tooltip"));
+    _dramaSlider.addListener(this);
 
     _viewport.setViewedComponent(&_listContent, false);
     _viewport.setScrollBarsShown(true, false);
@@ -184,6 +207,12 @@ NextChordPanel::NextChordPanel(const std::string& identifier):
         nui::Theme::newColor(nui::Theme::ThemeColor::BACKGROUND).asJuce().withAlpha(0.5f));
 
     nui::Component::displayBackground(nui::Theme::SECONDARY_BACKGROUND, nui::Theme::getBorderRadius());
+    syncDramaLabels();
+}
+
+NextChordPanel::~NextChordPanel()
+{
+    _dramaSlider.removeListener(this);
 }
 
 void NextChordPanel::setKeyAndScale(theory::Key key, theory::Scale scale)
@@ -197,6 +226,39 @@ void NextChordPanel::setCurrentChord(const theory::Chord& chord)
 {
     _currentChord = chord;
     regenerate();
+}
+
+void NextChordPanel::setDrama01(float drama01)
+{
+    drama01 = juce::jlimit(0.0f, 1.0f, drama01);
+    if (std::abs(drama01 - _drama01) < 0.0001f)
+        return;
+
+    _drama01 = drama01;
+    _dramaSlider.setValue(static_cast<double>(_drama01), juce::dontSendNotification);
+    regenerate();
+}
+
+void NextChordPanel::sliderValueChanged(juce::Slider* slider)
+{
+    if (slider != &_dramaSlider)
+        return;
+
+    const float next = static_cast<float>(_dramaSlider.getValue());
+    if (std::abs(next - _drama01) < 0.0001f)
+        return;
+
+    _drama01 = next;
+    regenerate();
+}
+
+void NextChordPanel::syncDramaLabels()
+{
+    _title.setText(juce::translate("next_chord_panel_title").toStdString());
+    _dramaLabel.setText(juce::translate("next_chord_drama_label").toStdString());
+    _dramaLowLabel.setText(juce::translate("next_chord_drama_smooth").toStdString());
+    _dramaHighLabel.setText(juce::translate("next_chord_drama_wild").toStdString());
+    _dramaSlider.setTooltip(juce::translate("next_chord_drama_tooltip"));
 }
 
 void NextChordPanel::clear()
@@ -223,7 +285,7 @@ void NextChordPanel::regenerate()
     _currentLabel.setText((juce::translate("next_chord_current_prefix") + " " + _currentChord->readableName).toStdString());
 
     const auto& keyScale = theory::ChordDatabase::getInstance().get(_key, _scale);
-    _candidates = theory::NextChordGenerator::generate(*_currentChord, keyScale);
+    _candidates = theory::NextChordGenerator::generate(*_currentChord, keyScale, _drama01);
 
     rebuildList();
     _viewport.setViewPosition(0, 0);
@@ -242,6 +304,14 @@ void NextChordPanel::resized()
     _title.setBounds(bounds.removeFromTop(18));
     bounds.removeFromTop(4);
     _currentLabel.setBounds(bounds.removeFromTop(16));
+    bounds.removeFromTop(4);
+
+    auto dramaRow = bounds.removeFromTop(kDramaRowHeight);
+    _dramaLabel.setBounds(dramaRow.removeFromLeft(48));
+    _dramaLowLabel.setBounds(dramaRow.removeFromLeft(46));
+    _dramaHighLabel.setBounds(dramaRow.removeFromRight(36));
+    _dramaSlider.setBounds(dramaRow.reduced(4, 2));
+
     bounds.removeFromTop(6);
     _viewport.setBounds(bounds);
 
@@ -253,12 +323,6 @@ void NextChordPanel::resized()
 void NextChordPanel::paint(juce::Graphics& g)
 {
     Component::paint(g);
-
-    if (_candidates.empty() && !_currentChord)
-    {
-        // Empty-state hint is drawn by the list when there are no rows; header already shows it
-        // via _currentLabel when regenerate() ran without a current chord.
-    }
 }
 
 }

@@ -5,28 +5,40 @@
 #include "Theory/Chord.h"
 #include "Theory/KeyScaleData.h"
 #include "Theory/NextChordCandidate.h"
+#include "Theory/Scale.h"
+#include "Theory/TriadLibrary.h"
 
 namespace theory
 {
 
-// Stateless scoring for next-chord ranking. All inputs are pitch-class sets derived from Chord::notes.
-// Weights are fixed for the triad MVP; a Drama slider can rebalance them later.
+// Stateless next-chord tension scoring.
+// drama01: target tension band for ranking (0 = softest first, 1 = wildest first).
+// Displayed tensionPercent is an objective "how colourful is this move" value; drama
+// mainly reorders the list toward that target.
 class NextChordScorer
 {
 public:
-    // Fills candidate.tensionPercent (0–100) and reasonLabel from currentChord + key/scale context.
-    static void score(const Chord& currentChord, const KeyScaleData& keyScale, NextChordCandidate& candidate);
+    static constexpr float kDefaultDrama = 0.35f;
 
-    // Convenience: score every entry and sort ascending by tensionPercent (stable by symbol).
+    static void score(const Chord& currentChord, const KeyScaleData& keyScale, NextChordCandidate& candidate,
+                      float drama01 = kDefaultDrama);
+
     static void scoreAndSort(const Chord& currentChord, const KeyScaleData& keyScale,
-                             std::vector<NextChordCandidate>& candidates);
+                             std::vector<NextChordCandidate>& candidates,
+                             float drama01 = kDefaultDrama);
 
-    // Exposed for unit tests.
     static int commonToneCount(const Chord& a, const Chord& b);
     static int rootPitchClass(const Chord& chord);
-    static int pitchClassDistance(int a, int b); // min distance on the circle, 0–6
+    static int pitchClassDistance(int a, int b);
+    static int circleOfFifthsDistance(int rootA, int rootB);
     static float voiceLeadingCost(const Chord& from, const Chord& to);
-    static bool isDiatonicTriad(const Chord& chord, const KeyScaleData& keyScale);
+    static bool isDiatonicChord(const Chord& chord, const KeyScaleData& keyScale);
+    static int nonScaleToneCount(const Chord& chord, const KeyScaleData& keyScale);
+    static TriadQuality detectTriadQuality(const Chord& chord);
+
+    // Major-ish vs minor-ish function tables depend on Scale.
+    enum class ScaleFamily { Majorish, Minorish, ModalSoft, Diminishedish };
+    static ScaleFamily scaleFamily(Scale scale);
 };
 
 }
