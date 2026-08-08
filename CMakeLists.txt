@@ -18,6 +18,12 @@ set(SOURCE_DIR "Code/Source")
 set(CMAKE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/CMake")
 set(LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Libs")
 
+# nierika_dsp resolution order:
+#  1) In-repo git submodule at Libs/nierika_dsp (preferred, reproducible)
+#  2) Optional local checkout (USE_LOCAL_NIERIKA_DSP) for active library development
+#  3) CPM fetch of the public package (last-resort fallback — may lag Chords Theory APIs)
+set(SUBMODULE_NIERIKA_DSP_PATH "${LIB_DIR}/nierika_dsp")
+
 # $ENV{USER}/$ENV{HOME} are unset on Windows (uses $ENV{USERNAME}/$ENV{USERPROFILE} instead), so
 # resolve the dev home per-platform rather than hardcoding a path that only works on one OS.
 if (WIN32)
@@ -26,13 +32,8 @@ else ()
     set(LOCAL_DSP_DEV_DIR "$ENV{HOME}/Development")
 endif ()
 
-set(USE_LOCAL_NIERIKA_DSP ON)
-set(LOCAL_NIERIKA_DSP_PATH "${LOCAL_DSP_DEV_DIR}/nierika_dsp") # Change for your local path to the nierika_dsp module if you want to use a local version instead of the remote package.
-
-if (USE_LOCAL_NIERIKA_DSP AND NOT EXISTS "${LOCAL_NIERIKA_DSP_PATH}")
-    message(STATUS "Local module 'nierika_dsp' with path '${LOCAL_NIERIKA_DSP_PATH}' not found. Falling back to remote package.")
-    set(USE_LOCAL_NIERIKA_DSP OFF)
-endif()
+set(USE_LOCAL_NIERIKA_DSP OFF)
+set(LOCAL_NIERIKA_DSP_PATH "${LOCAL_DSP_DEV_DIR}/nierika_dsp")
 
 project(${PROJECT_NAME} VERSION ${VERSION})
 
@@ -54,14 +55,19 @@ cpmaddpackage(
         SOURCE_DIR ${LIB_DIR}/juce
 )
 
-if (USE_LOCAL_NIERIKA_DSP)
+if (EXISTS "${SUBMODULE_NIERIKA_DSP_PATH}/nierika_dsp.h")
+    message(STATUS "Using nierika_dsp git submodule at ${SUBMODULE_NIERIKA_DSP_PATH}")
+    juce_add_module("${SUBMODULE_NIERIKA_DSP_PATH}" ALIAS_NAMESPACE nierika)
+elseif (USE_LOCAL_NIERIKA_DSP AND EXISTS "${LOCAL_NIERIKA_DSP_PATH}/nierika_dsp.h")
+    message(STATUS "Using local nierika_dsp at ${LOCAL_NIERIKA_DSP_PATH}")
     juce_add_module("${LOCAL_NIERIKA_DSP_PATH}" ALIAS_NAMESPACE nierika)
 else ()
+    message(STATUS "nierika_dsp submodule not found; fetching via CPM (may lack Chords Theory APIs)")
     cpmaddpackage(
             NAME NIERIKA_DSP
             GIT_TAG "v${NIERIKA_DSP_VERSION}"
             VERSION ${NIERIKA_DSP_VERSION}
-            GITHUB_REPOSITORY halbehers/nierika_dsp
+            GITHUB_REPOSITORY torarinvik/nierika_dsp
             SOURCE_DIR ${LIB_DIR}/nierika_dsp
     )
     juce_add_module("${LIB_DIR}/nierika_dsp" ALIAS_NAMESPACE nierika)

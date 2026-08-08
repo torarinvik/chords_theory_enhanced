@@ -15,8 +15,9 @@ components under `Code/Include/Component` are this plugin's own domain logic on 
 
 Same CMake presets, CPM dependency fetching, Catch2 + `pluginval` CTest wiring as the template —
 see `README.md` for exact commands (`cmake --workflow --preset default`, `ctest --test-dir build`).
-`USE_LOCAL_NIERIKA_DSP` is `ON` (see `CMakeLists.txt`), building against the local
-`~/Development/nierika_dsp` checkout rather than a pinned remote release.
+`nierika_dsp` is a git submodule at `Libs/nierika_dsp` ([torarinvik/nierika_dsp](https://github.com/torarinvik/nierika_dsp));
+clone with `--recurse-submodules` or run `git submodule update --init --recursive`. Optionally set
+`USE_LOCAL_NIERIKA_DSP` `ON` to develop against `~/Development/nierika_dsp` instead.
 
 ## Architecture
 

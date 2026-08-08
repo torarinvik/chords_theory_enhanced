@@ -36,11 +36,21 @@ as Standalone, AU, AUv3, and VST3.
 
 ## Building
 
-Dependencies — [JUCE](https://github.com/juce-framework/JUCE) 8.0.14,
-[Catch2](https://github.com/catchorg/Catch2), and Nierika's `nierika_dsp` module — are fetched
-automatically via [CPM](https://github.com/cpm-cmake/CPM.cmake) on first configure.
-`USE_LOCAL_NIERIKA_DSP` is `ON` in `CMakeLists.txt`, building against a local
-`~/Development/nierika_dsp` checkout — flip it `OFF` to use the pinned remote release instead.
+Clone with submodules (required for `nierika_dsp`):
+
+```sh
+git clone --recurse-submodules https://github.com/torarinvik/chords_theory.git
+# or after a normal clone:
+git submodule update --init --recursive
+```
+
+Dependencies — [JUCE](https://github.com/juce-framework/JUCE) 8.0.14 and
+[Catch2](https://github.com/catchorg/Catch2) are fetched automatically via
+[CPM](https://github.com/cpm-cmake/CPM.cmake) on first configure.
+`nierika_dsp` is a **git submodule** at `Libs/nierika_dsp`
+([torarinvik/nierika_dsp](https://github.com/torarinvik/nierika_dsp), extended for this plugin).
+Optional: set `USE_LOCAL_NIERIKA_DSP` `ON` in `CMakeLists.txt` to point at a separate checkout
+under `~/Development/nierika_dsp` while developing the library.
 
 ```sh
 cmake --workflow --preset default  # configure (first run/whenever CMakeLists.txt changes) + build
@@ -105,7 +115,7 @@ workflow artifacts, and publishes a GitHub pre-release on any `v*` tag.
 - `Tests` — Catch2 unit tests.
 - `CMake` — build configuration helpers (dependency fetching, compiler warnings, `pluginval`
   integration).
-- `Libs` — CPM-fetched dependencies (JUCE; `nierika_dsp` only if `USE_LOCAL_NIERIKA_DSP` is `OFF`).
+- `Libs` — CPM-fetched JUCE; `nierika_dsp` git submodule (see `.gitmodules`).
 
 ---
 
