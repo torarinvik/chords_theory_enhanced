@@ -400,19 +400,22 @@ namespace
 
         if (family == Family::Majorish || family == Family::ModalSoft)
         {
-            // Borrowed from parallel minor.
+            // Borrowed from parallel minor. These are idiomatic *colour*, not soft cadences:
+            // root motion can already look plagal/stepwise (C→Fm shares the I→IV bass leap), so a
+            // negative theory bonus made mixture iv outrank plain diatonic F/Am/G. Keep tags for
+            // the UI, but bias slightly *up* in tension — still softer than random chromatic.
             if (rel == 5 && NextChordScorer::isMinorishQuality(toQuality))
-            { out = { true, -0.08f, "mixture iv" }; return out; }
+            { out = { true, 0.07f, "mixture iv" }; return out; }   // Fm after C — darker than F
             if (rel == 8 && NextChordScorer::isMajorishQuality(toQuality))
-            { out = { true, -0.10f, "mixture bVI" }; return out; }
+            { out = { true, -0.02f, "mixture bVI" }; return out; } // Ab still a common rock colour
             if (rel == 3 && NextChordScorer::isMajorishQuality(toQuality))
-            { out = { true, -0.08f, "mixture bIII" }; return out; }
+            { out = { true, 0.05f, "mixture bIII" }; return out; }
             if (rel == 10 && NextChordScorer::isMajorishQuality(toQuality))
-            { out = { true, -0.09f, "mixture bVII" }; return out; }
+            { out = { true, -0.03f, "mixture bVII" }; return out; } // Bb — very common
             if (rel == 1 && NextChordScorer::isMajorishQuality(toQuality))
-            { out = { true, -0.06f, "Neapolitan" }; return out; }
+            { out = { true, 0.06f, "Neapolitan" }; return out; }
             if (rel == 0 && NextChordScorer::isMinorishQuality(toQuality))
-            { out = { true, 0.04f, "parallel minor" }; return out; } // i — colour, not soft
+            { out = { true, 0.10f, "parallel minor" }; return out; } // i — clear colour shift
         }
 
         if (family == Family::Minorish)
@@ -1480,19 +1483,18 @@ void NextChordScorer::score(const Chord& currentChord, const KeyScaleData& keySc
     const auto seqBias = sequenceContextBias(currentChord, candidate, keyScale, sequence,
                                              fromDegree, toDegree, rootFrom, rootTo, rootDir);
 
-    // Surface blend — carries most of the absolute tension so soft idioms stay differentiable.
-    // Voice-leading + bass motion are weighted so closer transitions (including inversions with
-    // small bass steps) rank as lower tension, without drowning progression grammar.
+    // Surface blend — absolute "how colourful is this move" (always non-negative contributions).
+    // Voice-leading + bass motion weight closer transitions softer without erasing root motion.
     constexpr float wCt = 0.20f;
-    constexpr float wRoot = 0.13f;
+    constexpr float wRoot = 0.14f;
     constexpr float wBass = 0.10f;
-    constexpr float wFifths = 0.08f;
-    constexpr float wVl = 0.22f;
-    constexpr float wChrom = 0.12f;
-    constexpr float wQual = 0.08f;
+    constexpr float wFifths = 0.09f;
+    constexpr float wVl = 0.20f;
+    constexpr float wChrom = 0.13f;
+    constexpr float wQual = 0.10f;
     constexpr float weightSum = wCt + wRoot + wBass + wFifths + wVl + wChrom + wQual;
 
-    float tension01 =
+    float surface01 =
         (wCt * commonToneTension +
          wRoot * rootTension +
          wBass * bassTension +
@@ -1501,20 +1503,29 @@ void NextChordScorer::score(const Chord& currentChord, const KeyScaleData& keySc
          wChrom * chromaticism +
          wQual * qualityTension) / weightSum;
 
-    tension01 += sameRootPenalty * 0.85f;
+    surface01 += sameRootPenalty * 0.85f;
 
-    // Same harmony, different bass only (e.g. C → C/E): very smooth colour of the same chord.
+    // Chromatic sonority riding a soft diatonic root leap (e.g. C→Fm: same bass as I→IV) used to
+    // look almost as smooth as the real diatonic neighbour. Nudge those "borrowed" moves up.
+    if (!toDiatonic && (rootDir == 5 || rootDir == 7 || rootMin <= 2))
+        surface01 += 0.05f * std::clamp(chromaticism * 1.4f, 0.0f, 1.0f);
+
+    // Pure inversion (same pcs, new bass): mildly softer, but keep bass-step colour so C/E and
+    // C/G don't both collapse to the same zero as every other smooth move.
     if (pureInversionChange)
-        tension01 *= 0.45f;
+        surface01 = surface01 * 0.82f + 0.02f;
 
-    // Theory layers: scaled so they reorder within a band without collapsing to 0.
-    // Grammar is slightly amplified so classic moves (ii–V, V–I) still beat merely
-    // stepwise bass motion to a weaker function.
-    const float theoryScale = lerp(0.85f, 0.35f, drama01);
-    float theory =
+    // Small base so even the smoothest move reports a little colour (avoids a wall of 0%s).
+    surface01 = std::max(surface01, 0.03f);
+
+    // Theory reorders preference; full effect goes into rankingScore. Display allows a moderate
+    // pull-down (enough for cadences to beat mere common-tone neighbours) without collapsing the
+    // whole soft band to 0%.
+    const float theoryScale = lerp(0.62f, 0.30f, drama01);
+    const float theory =
         functional * 0.9f
         + fitness
-        + grammar * 1.45f
+        + grammar * 1.25f
         + roleBias
         + secondaryOffset
         + tritoneSub.offset
@@ -1527,9 +1538,22 @@ void NextChordScorer::score(const Chord& currentChord, const KeyScaleData& keySc
         + fifthsChain
         + approach.offset
         + seqBias.offset;
-    tension01 += theory * theoryScale;
 
-    candidate.tensionPercent = std::clamp(static_cast<int>(std::round(tension01 * 100.0f)), 0, 100);
+    const float theoryRaw = theory * theoryScale;
+    candidate.rankingScore = surface01 + theoryRaw;
+
+    // Cap display pull-down: large enough for V–I / ii–V to win over weak common-tone moves,
+    // small enough that soft diatonics stay spread above zero.
+    constexpr float kMaxTheoryPullDown = 0.18f;
+    const float theoryForDisplay = theoryRaw < 0.0f
+        ? std::max(theoryRaw, -kMaxTheoryPullDown)
+        : theoryRaw * 0.9f;
+
+    float display01 = std::clamp(surface01 + theoryForDisplay, 0.0f, 1.0f);
+    // Map into 2–100 so the UI never shows a dead "0" for a real candidate (identical current
+    // voicing is excluded by the generator). Keeps relative order inside the soft band.
+    const int displayPercent = 2 + static_cast<int>(std::round(display01 * 98.0f));
+    candidate.tensionPercent = std::clamp(displayPercent, 2, 100);
 
     // Reason label: degree/role · grammar · idioms · surface cues
     std::ostringstream reason;
@@ -1626,22 +1650,44 @@ void NextChordScorer::scoreAndSort(const Chord& currentChord, const KeyScaleData
     for (auto& candidate : candidates)
         score(currentChord, keyScale, candidate, drama01, sequence);
 
-    // Drama selects a target tension band: 0 → softest first, 1 → wildest first.
-    const int targetTension = static_cast<int>(std::round(drama01 * 100.0f));
+    if (candidates.empty())
+        return;
+
+    // Drama picks a target within the *observed* rankingScore range (not a fixed 0–1), so
+    // drama=0 is always the softest score in this list and drama=1 the wildest — even when
+    // theory pushes rankingScore negative.
+    float minScore = candidates.front().rankingScore;
+    float maxScore = minScore;
+    for (const auto& candidate : candidates)
+    {
+        minScore = std::min(minScore, candidate.rankingScore);
+        maxScore = std::max(maxScore, candidate.rankingScore);
+    }
+    const float targetScore = minScore + (maxScore - minScore) * drama01;
 
     std::stable_sort(candidates.begin(), candidates.end(),
-        [targetTension](const NextChordCandidate& a, const NextChordCandidate& b)
+        [targetScore, drama01](const NextChordCandidate& a, const NextChordCandidate& b)
         {
-            const int da = std::abs(a.tensionPercent - targetTension);
-            const int db = std::abs(b.tensionPercent - targetTension);
-            if (da != db)
+            const float da = std::abs(a.rankingScore - targetScore);
+            const float db = std::abs(b.rankingScore - targetScore);
+            if (std::abs(da - db) > 1.0e-5f)
                 return da < db;
+
+            // Prefer lower rankingScore when targeting the soft end, higher when wild.
+            if (std::abs(a.rankingScore - b.rankingScore) > 1.0e-5f)
+            {
+                if (drama01 <= 0.5f)
+                    return a.rankingScore < b.rankingScore;
+                return a.rankingScore > b.rankingScore;
+            }
+
             if (a.tensionPercent != b.tensionPercent)
             {
-                if (targetTension <= 50)
+                if (drama01 <= 0.5f)
                     return a.tensionPercent < b.tensionPercent;
                 return a.tensionPercent > b.tensionPercent;
             }
+
             return a.chord.symbol < b.chord.symbol;
         });
 }

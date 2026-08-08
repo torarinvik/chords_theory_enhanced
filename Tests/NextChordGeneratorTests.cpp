@@ -160,9 +160,9 @@ TEST_CASE("NextChordGenerator: pool includes sevenths and inversions; drama reor
     // (e.g. C+ ≡ E+ ≡ G#+, Csus2 ≡ Gsus4). Unique voicings minus current C: 371.
     REQUIRE(candidates.size() == 371);
 
-    // drama=0 → softest first (monotone non-decreasing tension).
+    // drama=0 → softest first (monotone non-decreasing rankingScore; display tension tracks it).
     for (std::size_t i = 1; i < candidates.size(); ++i)
-        CHECK(candidates[i - 1].tensionPercent <= candidates[i].tensionPercent);
+        CHECK(candidates[i - 1].rankingScore <= candidates[i].rankingScore + 1.0e-5f);
 
     REQUIRE(findByPcs(candidates, { 0, 5, 7 }) != nullptr);       // Csus4
     REQUIRE(findByPcs(candidates, { 0, 2, 7 }) != nullptr);       // Csus2
@@ -199,7 +199,54 @@ TEST_CASE("NextChordGenerator: pool includes sevenths and inversions; drama reor
     const auto wild = NextChordGenerator::generate(current, keyScale, 1.0f);
     REQUIRE(wild.size() == candidates.size());
     for (std::size_t i = 1; i < wild.size(); ++i)
-        CHECK(wild[i - 1].tensionPercent >= wild[i].tensionPercent);
+        CHECK(wild[i - 1].rankingScore + 1.0e-5f >= wild[i].rankingScore);
+
+    // Soft band is differentiated — not a wall of zeros at the top of the calm list.
+    int zerosInTop20 = 0;
+    for (std::size_t i = 0; i < std::min<std::size_t>(20, candidates.size()); ++i)
+    {
+        if (candidates[i].tensionPercent <= 0)
+            ++zerosInTop20;
+    }
+    CHECK(zerosInTop20 == 0);
+
+    // Distinct soft moves should not all share the exact same display tension.
+    std::set<int> topTensions;
+    for (std::size_t i = 0; i < std::min<std::size_t>(12, candidates.size()); ++i)
+        topTensions.insert(candidates[i].tensionPercent);
+    CHECK(topTensions.size() >= 4);
+}
+
+TEST_CASE("NextChordScorer: soft diatonic moves stay differentiated above zero", "[NextChord]")
+{
+    const auto& keyScale = ChordDatabase::getInstance().get(Key::C, Scale::Major);
+    const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C);
+    const auto g = TriadLibrary::makeTriad(7, TriadQuality::Major, Key::C);
+    const auto am = TriadLibrary::makeTriad(9, TriadQuality::Minor, Key::C);
+    const auto f = TriadLibrary::makeTriad(5, TriadQuality::Major, Key::C);
+    const auto dm = TriadLibrary::makeTriad(2, TriadQuality::Minor, Key::C);
+    const auto fs = TriadLibrary::makeTriad(6, TriadQuality::Major, Key::C);
+
+    const int tG = tensionOf(c, g, keyScale, Degree::V);
+    const int tAm = tensionOf(c, am, keyScale, Degree::VI);
+    const int tF = tensionOf(c, f, keyScale, Degree::IV);
+    const int tDm = tensionOf(c, dm, keyScale, Degree::II);
+    const int tFs = tensionOf(c, fs, keyScale);
+
+    // No pile-up at 0 for the common diatonic set.
+    CHECK(tG >= 2);
+    CHECK(tAm >= 2);
+    CHECK(tF >= 2);
+    CHECK(tDm >= 2);
+
+    // Remote still harder than primaries.
+    CHECK(tG < tFs);
+    CHECK(tAm < tFs);
+    CHECK(tF < tFs);
+
+    // Soft primaries are not all identical after rounding.
+    const std::set<int> soft { tG, tAm, tF, tDm };
+    CHECK(soft.size() >= 2);
 }
 
 TEST_CASE("NextChordScorer: closer voice-leading and inversions rank as lower tension", "[NextChord]")
@@ -424,6 +471,46 @@ TEST_CASE("NextChordScorer: mode mixture bVI/bVII softer than random chromatic",
 
     CHECK(tensionOf(c, ab, keyScale) < tensionOf(c, fs, keyScale));
     CHECK(tensionOf(c, bb, keyScale) < tensionOf(c, fs, keyScale));
+}
+
+TEST_CASE("NextChordScorer: mixture iv (Fm after C) ranks harder than diatonic F/Am/G", "[NextChord]")
+{
+    // Regression: C→Fm used to get a strong "mixture iv" softness bonus while sharing the same
+    // soft I→IV root leap as C→F, so it floated near the top of the calm list.
+    const auto& keyScale = ChordDatabase::getInstance().get(Key::C, Scale::Major);
+    const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C);
+    const auto f = TriadLibrary::makeTriad(5, TriadQuality::Major, Key::C);
+    const auto fm = TriadLibrary::makeTriad(5, TriadQuality::Minor, Key::C);
+    const auto am = TriadLibrary::makeTriad(9, TriadQuality::Minor, Key::C);
+    const auto g = TriadLibrary::makeTriad(7, TriadQuality::Major, Key::C);
+    const auto fs = TriadLibrary::makeTriad(6, TriadQuality::Major, Key::C);
+
+    const int tF = tensionOf(c, f, keyScale, Degree::IV);
+    const int tFm = tensionOf(c, fm, keyScale);
+    const int tAm = tensionOf(c, am, keyScale, Degree::VI);
+    const int tG = tensionOf(c, g, keyScale, Degree::V);
+    const int tFs = tensionOf(c, fs, keyScale);
+
+    CHECK(tF < tFm);
+    CHECK(tAm < tFm);
+    CHECK(tG < tFm);
+    // Still recognisable colour, not as remote as F#.
+    CHECK(tFm < tFs);
+
+    // Calm generate: Fm must not beat diatonic F in list order.
+    const auto calm = NextChordGenerator::generate(c, keyScale, 0.0f);
+    const auto rankOf = [&](const std::string& symbol) -> int
+    {
+        for (std::size_t i = 0; i < calm.size(); ++i)
+            if (calm[i].chord.symbol == symbol)
+                return static_cast<int>(i);
+        return -1;
+    };
+    const int rF = rankOf("F");
+    const int rFm = rankOf("Fm");
+    REQUIRE(rF >= 0);
+    REQUIRE(rFm >= 0);
+    CHECK(rF < rFm);
 }
 
 TEST_CASE("NextChordScorer: directed root interval and degree helpers", "[NextChord]")

@@ -19,18 +19,14 @@ namespace theory
 // Displayed tensionPercent is an objective "how colourful is this move" value; drama
 // mainly reorders the list toward that target.
 //
-// Layers (combined into tensionPercent):
-//  - surface: common tones, voice leading (bass + upper voices), bass motion, directed root /
-//    circle-of-fifths motion, chromaticism — closer voice-leading / bass steps = less tension;
-//    pure inversions of the same harmony are especially soft
-//  - quality: target sonority colour + same-root colour changes + blues I7/IV7
-//  - function: scale-family degree bias + quality-vs-degree fitness + diatonic 7th colour
-//  - grammar: classic progressions (ii–V, V–I, plagal, deceptive, …) + falling-fifths glue
-//  - prepare/resolve: secondary V/x (weighted), tritone sub, dominant resolution / abandon
-//  - colour idioms: mode mixture, backdoor, sus resolve, chromatic mediants, approach chords
-//  - tendency tones: leading-tone / 4→3 / guide-tone resolutions
-//  - sequence context: phrase memory from previous progression slots (ii–V–I, fifths chains,
-//    repeat avoidance, modal tetrachords)
+// Layers:
+//  - surface (absolute colour): common tones, voice leading, bass motion, root / fifths motion,
+//    chromaticism, quality — closer VL/bass = less tension
+//  - theory (reordering bias, capped on display): function, grammar, role, secondary/tritone,
+//    mixture, tendency, sequence memory, …
+// Surface sets most of the displayed tensionPercent; theory may pull it down only a little so
+// soft diatonic moves stay differentiated (no pile-up at 0). rankingScore keeps the full theory
+// effect for drama-based sorting.
 class NextChordScorer
 {
 public:
