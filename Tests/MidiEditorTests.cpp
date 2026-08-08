@@ -61,6 +61,8 @@ namespace
         int contentChangedCount = 0;
         int playbackStateChangedCount = 0;
         bool lastPlaybackState = false;
+        int chordPreviewCount = 0;
+        std::vector<int> lastPreviewNotes;
 
         void onChordFileDropped(double startBeat, const juce::String&) override
         {
@@ -74,6 +76,12 @@ namespace
         {
             ++playbackStateChangedCount;
             lastPlaybackState = isPlaying;
+        }
+
+        void onChordBlockPreviewRequested(const std::vector<int>& midiNotes) override
+        {
+            ++chordPreviewCount;
+            lastPreviewNotes = midiNotes;
         }
     };
 
@@ -298,6 +306,61 @@ TEST_CASE("MidiEditor::clear empties both notes and chord blocks", "[MidiEditor]
 
     CHECK(editor.getNoteCount() == 0);
     CHECK(editor.getChordBlockCount() == 0);
+}
+
+TEST_CASE("MidiEditor: clicking a chord-lane label previews its notes without moving the block", "[MidiEditor]")
+{
+    MidiEditor editor("test-midi-editor");
+    editor.setBounds(0, 0, 800, 400);
+
+    RecordingListener listener;
+    editor.addListener(&listener);
+
+    const auto& chord = getTestChord();
+    const auto expectedNotes = NoteConvertor::voiceChordCloseToMiddleC(chord);
+    editor.addChordAtBeat(0.0, chord, testSlot(chord));
+    const auto contentChangedAfterAdd = listener.contentChangedCount;
+
+    const auto chordLaneY = 400.f - kScrollbarThickness - kChordLaneHeight + 4.f;
+    const juce::Point<float> clickPos { beatToX(0.0) + 1.f, chordLaneY };
+    editor.mouseDown(makeMouseEvent(editor, clickPos));
+    editor.mouseUp(makeMouseEvent(editor, clickPos));
+
+    REQUIRE(listener.chordPreviewCount == 1);
+    REQUIRE(listener.lastPreviewNotes.size() == expectedNotes.size());
+    for (std::size_t i = 0; i < expectedNotes.size(); ++i)
+        CHECK(listener.lastPreviewNotes[i] == expectedNotes[i]);
+
+    // Pure click must not move the block or fire another content-changed.
+    REQUIRE(*editor.getChordBlockStartBeat(0) == Catch::Approx(0.0));
+    CHECK(listener.contentChangedCount == contentChangedAfterAdd);
+
+    editor.removeListener(&listener);
+}
+
+TEST_CASE("MidiEditor: dragging a chord-lane label does not preview, it moves", "[MidiEditor]")
+{
+    MidiEditor editor("test-midi-editor");
+    editor.setBounds(0, 0, 800, 400);
+
+    RecordingListener listener;
+    editor.addListener(&listener);
+
+    editor.addChordAtBeat(0.0, getTestChord(), testSlot(getTestChord()));
+    const auto contentChangedAfterAdd = listener.contentChangedCount;
+
+    const auto chordLaneY = 400.f - kScrollbarThickness - kChordLaneHeight + 4.f;
+    const juce::Point<float> start { beatToX(0.0) + 1.f, chordLaneY };
+    const juce::Point<float> dragged { start.x + kPixelsPerBeat * 2.f, chordLaneY };
+    editor.mouseDown(makeMouseEvent(editor, start));
+    editor.mouseDrag(makeMouseEvent(editor, dragged));
+    editor.mouseUp(makeMouseEvent(editor, dragged));
+
+    CHECK(listener.chordPreviewCount == 0);
+    REQUIRE(*editor.getChordBlockStartBeat(0) == Catch::Approx(2.0));
+    CHECK(listener.contentChangedCount == contentChangedAfterAdd + 1);
+
+    editor.removeListener(&listener);
 }
 
 TEST_CASE("MidiEditor::getState/restoreState round-trips notes, chord blocks, and their sourceSlot exactly", "[MidiEditor]")

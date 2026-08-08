@@ -39,6 +39,9 @@ namespace
     constexpr double kWheelScrollBeats = 2.0; // per full wheel notch
     constexpr float kWheelScrollRows = 3.0f;
 
+    // Same threshold ChordCard uses: below this, mouse-up is a click (preview), not a drag-move.
+    constexpr float kClickMaxDistance = 6.f;
+
     constexpr std::array<bool, 12> kIsBlackKey { false,true,false,true,false,false,true,false,true,false,true,false };
     const std::array<juce::String, 12> kNoteNames { "C","C#","D","D#","E","F","F#","G","G#","A","A#","B" };
 }
@@ -499,10 +502,13 @@ void MidiEditor::mouseDrag(const juce::MouseEvent& event)
     applyDragAt(event.position);
 }
 
-void MidiEditor::mouseUp(const juce::MouseEvent&)
+void MidiEditor::mouseUp(const juce::MouseEvent& event)
 {
     const auto finishedDragMode = _dragMode;
+    const auto finishedChordIndex = _draggedChordIndex;
+    const auto originalChordStartBeat = _dragStartBeat;
     const auto didDrag = finishedDragMode != DragMode::None;
+    const auto dragDistance = event.position.getDistanceFrom(_dragStartMouse);
 
     _dragMode = DragMode::None;
     _draggedNoteIndex = -1;
@@ -521,11 +527,40 @@ void MidiEditor::mouseUp(const juce::MouseEvent&)
         _loopManuallyAdjusted = true;
         if (_progressionPlayer != nullptr)
             _progressionPlayer->setLoopBounds(_loopStartBeat, _loopEndBeat);
+        return;
     }
-    else if (didDrag)
+
+    // Chord-lane label: click (no real drag) previews the block's live notes; a real drag moves it.
+    if (finishedDragMode == DragMode::MoveChordBlock
+        && finishedChordIndex >= 0
+        && finishedChordIndex < static_cast<int>(_chordBlocks.size()))
     {
+        if (dragDistance < kClickMaxDistance)
+        {
+            // Undo any micro-nudge so a pure click never mutates the progression.
+            _chordBlocks[static_cast<std::size_t>(finishedChordIndex)].startBeat = originalChordStartBeat;
+
+            const auto blockId = _chordBlocks[static_cast<std::size_t>(finishedChordIndex)].id;
+            std::vector<int> midiNotes;
+            midiNotes.reserve(4);
+            for (const auto& note : _notes)
+            {
+                if (note.sourceChordId == blockId)
+                    midiNotes.push_back(note.midiNote);
+            }
+            std::sort(midiNotes.begin(), midiNotes.end());
+
+            for (auto* listener : _listeners)
+                listener->onChordBlockPreviewRequested(midiNotes);
+            return;
+        }
+
         notifyContentChanged();
+        return;
     }
+
+    if (didDrag)
+        notifyContentChanged();
 }
 
 void MidiEditor::mouseDoubleClick(const juce::MouseEvent& event)

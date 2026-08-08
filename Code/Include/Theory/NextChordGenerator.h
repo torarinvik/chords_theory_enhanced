@@ -11,8 +11,10 @@
 namespace theory
 {
 
-// Builds next-chord candidates from the algorithmic catalogue (triads, sus, power, sevenths),
-// deduped by pitch-class set, ranked by NextChordScorer (optionally with sequence memory).
+// Builds next-chord candidates from the algorithmic catalogue (triads, sus, power, sevenths —
+// each inversion kept as its own voicing), deduped by bass + pitch-class set, ranked by
+// NextChordScorer (optionally with sequence memory). Closer voice-leading / bass motion ranks
+// as lower tension.
 class NextChordGenerator
 {
 public:

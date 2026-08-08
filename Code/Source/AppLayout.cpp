@@ -73,8 +73,10 @@ AppLayout::AppLayout(ndsp::ParameterManager& parameterManager, PluginAudioProces
     _mainSection.addPanel("synth-tab", juce::translate("synth_tab_label").toStdString());
 
     _mainSection.getLayout().setDisplayGrid(false);
-    // rows: settings, browser, voicing, next-triads, spacer, progression
-    _mainSection.getLayout().init({ 1, 1, 1, 1, 1, 1 }, { 1, 1, 1, 1, 1, 1, 1, 1, 1 });
+    // rows: settings (fixed), voicing (fixed 0/80), browser / next-chords / progression (flexible,
+    // user-resizable). Weights approximate the old fixed heights (browser ~64, next ~160) with
+    // progression taking the remaining space.
+    _mainSection.getLayout().init({ 1, 1, 1, 2, 5 }, { 1, 1, 1, 1, 1, 1, 1, 1, 1 });
 
     _mainSection.getLayout().setFixedColumnWidth(0, 24.f);
     _mainSection.getLayout().setFixedColumnWidth(8, 24.f);
@@ -82,17 +84,37 @@ AppLayout::AppLayout(ndsp::ParameterManager& parameterManager, PluginAudioProces
     _mainSection.getLayout().setFixedColumnWidth(7, 32.f);
     _mainSection.getLayout().setFixedColumnWidth(4, 450.f);
     _mainSection.getLayout().setFixedRowHeight(0, 60.f);
-    _mainSection.getLayout().setFixedRowHeight(1, 64.f);
-    _mainSection.getLayout().setFixedRowHeight(2, 70.f);
-    _mainSection.getLayout().setFixedRowHeight(3, 160.f); // next-triad ranking panel
-    _mainSection.getLayout().setFixedRowHeight(4, 12.f);
+    // Row 1 (voicing) is fixed; height is driven by setVoicingVisibility (0 when closed).
 
     _mainSection.getLayout().addComponent(_settings, 0, 1, 1, 1);
     _mainSection.getLayout().addComponent(_keyScaleSelector, 0, 4, 1, 1);
-    _mainSection.getLayout().addComponent(_chordBrowser, 1, 3, 3, 1);
-    _mainSection.getLayout().addComponent(_voicingSelector, 2, 0, 9, 1);
+    _mainSection.getLayout().addComponent(_voicingSelector, 1, 0, 9, 1);
+    _mainSection.getLayout().addComponent(_chordBrowser, 2, 3, 3, 1);
     _mainSection.getLayout().addComponent(_nextChordPanel, 3, 1, 7, 1);
-    _mainSection.getLayout().addComponent(_progressionEditor, 5, 1, 7, 1);
+    _mainSection.getLayout().addComponent(_progressionEditor, 4, 1, 7, 1);
+
+    // Drag handles between browser|next-chords and next-chords|progression. Both adjacent rows
+    // must be flexible (setResizableLine rejects fixed tracks on either side of the line).
+    using ResizableLine = nlayout::GridLayout<nui::Component>::ResizableLine;
+    using ResizableLineConfiguration = nlayout::GridLayout<nui::Component>::ResizableLineConfiguration;
+    _mainSection.setLayoutResizableLineConfiguration(ResizableLineConfiguration {
+        .thickness = 2.f,
+        .displayHandle = true,
+        .displayLine = true,
+        .lineAlpha = 0.25f,
+    });
+    _mainSection.getLayout().setResizableLine(ResizableLine {
+        .position = 3,
+        .direction = nlayout::GridLayout<nui::Component>::HORIZONTAL,
+    });
+    _mainSection.getLayout().setResizableLine(ResizableLine {
+        .position = 4,
+        .direction = nlayout::GridLayout<nui::Component>::HORIZONTAL,
+    });
+
+    _mainSection.getLayout().setMinResizableHeight("chord-degree-browser", 48.f);
+    _mainSection.getLayout().setMinResizableHeight("next-chord-panel", 96.f);
+    _mainSection.getLayout().setMinResizableHeight("progression-sequencer", 140.f);
 
     _mainSection.getLayout("synth-tab").setDisplayGrid(false);
     _mainSection.getLayout("synth-tab").init({ 1 }, { 1 });
@@ -285,8 +307,8 @@ void AppLayout::onVoicingSelectorClosed()
 void AppLayout::setVoicingVisibility(bool isVisible)
 {
     _voicingSelector.setVisible(isVisible);
-    // Voicing selector is row 2 in the chords-tab grid.
-    _mainSection.getLayout().setFixedRowHeight(2, isVisible ? 80.f : 0.f);
+    // Voicing selector is row 1 in the chords-tab grid (between settings and the resizable stack).
+    _mainSection.getLayout().setFixedRowHeight(1, isVisible ? 80.f : 0.f);
 
     // setFixedRowHeight only updates the fixed-height map - it takes effect on the next time
     // _mainSection's own GridLayout::resized() actually runs. That normally only happens as a
@@ -329,6 +351,13 @@ void AppLayout::onProgressionDragStarted()
 
     if (auto* dragContainer = findParentComponentOfClass<juce::DragAndDropContainer>())
         dragContainer->performExternalDragDropOfFiles({ midiFile.getFullPathName() }, false);
+}
+
+void AppLayout::onChordBlockPreviewRequested(const std::vector<int>& midiNotes)
+{
+    // Same audition path as chord-card / next-chord play: internal synth + host MIDI out.
+    _audioProcessor.getSynthEngine().previewChord(midiNotes);
+    _audioProcessor.getHostMidiEmitter().playChord(midiNotes, 1000);
 }
 
 void AppLayout::onContentChanged()

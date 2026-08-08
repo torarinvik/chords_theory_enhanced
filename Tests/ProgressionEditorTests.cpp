@@ -36,6 +36,8 @@ namespace
         int contentChangedCount = 0;
         int fileDroppedCount = 0;
         double lastFileDroppedBeat = -1.0;
+        int chordPreviewCount = 0;
+        std::vector<int> lastPreviewNotes;
 
         void onChordFileDropped(double startBeat, const juce::String&) override
         {
@@ -44,6 +46,11 @@ namespace
         }
         void onProgressionDragStarted() override {}
         void onContentChanged() override { ++contentChangedCount; }
+        void onChordBlockPreviewRequested(const std::vector<int>& midiNotes) override
+        {
+            ++chordPreviewCount;
+            lastPreviewNotes = midiNotes;
+        }
     };
 
     // Both nelement::SVGButton and nelement::TextButton wrap a single, always-first, internal

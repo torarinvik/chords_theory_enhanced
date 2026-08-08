@@ -1,5 +1,7 @@
 #include "Theory/TriadLibrary.h"
 
+#include <algorithm>
+
 #include "Theory/Key.h"
 
 namespace theory
@@ -121,23 +123,47 @@ ChordType TriadLibrary::chordTypeForQuality(TriadQuality quality)
     return ChordType::Triad;
 }
 
-Chord TriadLibrary::makeTriad(int rootPitchClass, TriadQuality quality, Key rootSpellKey)
+int TriadLibrary::inversionCount(TriadQuality quality)
+{
+    // One bass placement per chord tone (root + each interval).
+    return 1 + static_cast<int>(qualityIntervals(quality).size());
+}
+
+Chord TriadLibrary::makeTriad(int rootPitchClass, TriadQuality quality, Key rootSpellKey, int inversion)
 {
     rootPitchClass = mod12(rootPitchClass);
     const auto* rootName = pitchClassName(rootPitchClass, rootSpellKey);
 
+    struct Tone
+    {
+        int pitchClass = 0;
+        int role = 1;
+    };
+
+    std::vector<Tone> tones;
+    tones.push_back({ rootPitchClass, 1 });
+    for (const int interval : qualityIntervals(quality))
+        tones.push_back({ mod12(rootPitchClass + interval), roleForInterval(interval) });
+
+    const int toneCount = static_cast<int>(tones.size());
+    if (toneCount <= 0)
+        return {};
+
+    inversion = std::clamp(inversion, 0, toneCount - 1);
+    std::rotate(tones.begin(), tones.begin() + inversion, tones.end());
+
+    const auto* bassName = pitchClassName(tones.front().pitchClass, rootSpellKey);
+    const std::string rootSymbol = std::string(rootName) + qualitySuffix(quality);
+
     Chord chord;
-    chord.symbol = std::string(rootName) + qualitySuffix(quality);
+    chord.symbol = inversion == 0 ? rootSymbol : rootSymbol + "/" + bassName;
     chord.readableName = chord.symbol;
     chord.type = chordTypeForQuality(quality);
-    chord.popularityOrder = 1;
-    chord.notes = { makeNote(rootName, 1) };
+    // Root position is the default; inversions rank after it (still 1-based popularity style).
+    chord.popularityOrder = inversion + 1;
 
-    for (const int interval : qualityIntervals(quality))
-    {
-        const int pc = mod12(rootPitchClass + interval);
-        chord.notes.push_back(makeNote(pitchClassName(pc, rootSpellKey), roleForInterval(interval)));
-    }
+    for (const auto& tone : tones)
+        chord.notes.push_back(makeNote(pitchClassName(tone.pitchClass, rootSpellKey), tone.role));
 
     return chord;
 }
@@ -159,11 +185,17 @@ std::vector<Chord> TriadLibrary::allTriads(Key rootSpellKey)
     };
 
     std::vector<Chord> chords;
-    chords.reserve(kNumNamedChords);
+    chords.reserve(static_cast<std::size_t>(kNumNamedChords));
 
     for (int root = 0; root < kNumRoots; ++root)
+    {
         for (const auto quality : kQualities)
-            chords.push_back(makeTriad(root, quality, rootSpellKey));
+        {
+            const int invCount = inversionCount(quality);
+            for (int inv = 0; inv < invCount; ++inv)
+                chords.push_back(makeTriad(root, quality, rootSpellKey, inv));
+        }
+    }
 
     return chords;
 }

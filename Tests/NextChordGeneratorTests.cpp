@@ -67,13 +67,13 @@ namespace
     }
 }
 
-TEST_CASE("TriadLibrary: 11 qualities on 12 roots including sevenths", "[NextChord][TriadLibrary]")
+TEST_CASE("TriadLibrary: 11 qualities on 12 roots including sevenths and inversions", "[NextChord][TriadLibrary]")
 {
     const auto all = TriadLibrary::allTriads(Key::C);
     REQUIRE(all.size() == TriadLibrary::kNumNamedChords);
-    REQUIRE(all.size() == 132);
+    REQUIRE(all.size() == 432); // root positions + inversions
 
-    int sus2 = 0, sus4 = 0, power = 0, sevenths = 0;
+    int sus2 = 0, sus4 = 0, power = 0, sevenths = 0, slash = 0, rootPosition = 0;
     for (const auto& c : all)
     {
         if (c.type == ChordType::Sus2)
@@ -84,19 +84,47 @@ TEST_CASE("TriadLibrary: 11 qualities on 12 roots including sevenths", "[NextCho
             ++power;
         if (c.type == ChordType::Seventh)
             ++sevenths;
+        if (c.symbol.find('/') != std::string::npos)
+            ++slash;
+        else
+            ++rootPosition;
     }
-    CHECK(sus2 == 12);
-    CHECK(sus4 == 12);
-    CHECK(power == 12);
-    CHECK(sevenths == 48); // maj7 / m7 / 7 / m7b5 × 12
+    // Each quality × inversions: sus2/sus4 are 3-note → 3 inv × 12 roots.
+    CHECK(sus2 == 36);
+    CHECK(sus4 == 36);
+    CHECK(power == 24);     // 2-note × 12 roots
+    CHECK(sevenths == 192); // 4 qualities × 4 inv × 12
+    CHECK(rootPosition == TriadLibrary::kNumRootPositionChords);
+    CHECK(slash == TriadLibrary::kNumNamedChords - TriadLibrary::kNumRootPositionChords);
 
-    // Pre-seventh unique sonorities: 64 (12×(maj+min+dim+power) + 4 aug + 12 sus after Csus2≡Gsus4).
-    // Sevenths are all 4-note sets, so they never collide with 2/3-note triads/sus/power.
-    // 4 seventh qualities × 12 roots = 48 additional unique sets → 112.
+    // Unique pitch-class sets are unchanged by inversions (same tones, different bass).
+    // Pre-seventh unique sonorities: 64; + 48 seventh sets → 112.
     std::set<std::set<int>> uniqueSets;
     for (const auto& c : all)
         uniqueSets.insert(pitchClasses(c));
     CHECK(uniqueSets.size() == 112);
+}
+
+TEST_CASE("TriadLibrary: inversions are bass-first slash chords with root role preserved", "[NextChord][TriadLibrary]")
+{
+    const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C, 0);
+    const auto cOverE = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C, 1);
+    const auto cOverG = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C, 2);
+
+    CHECK(c.symbol == "C");
+    CHECK(cOverE.symbol == "C/E");
+    CHECK(cOverG.symbol == "C/G");
+
+    REQUIRE(cOverE.notes.size() == 3);
+    CHECK(cOverE.notes.front().rawNote == "E"); // bass
+    CHECK(NextChordScorer::bassPitchClass(cOverE) == 4);
+    CHECK(NextChordScorer::rootPitchClass(cOverE) == 0); // still C
+    CHECK(pitchClasses(cOverE) == std::set<int>({ 0, 4, 7 }));
+
+    const auto g7Third = TriadLibrary::makeTriad(7, TriadQuality::Dominant7, Key::C, 3);
+    CHECK(g7Third.symbol == "G7/F"); // 7th in bass
+    CHECK(NextChordScorer::rootPitchClass(g7Third) == 7);
+    CHECK(NextChordScorer::bassPitchClass(g7Third) == 5);
 }
 
 TEST_CASE("TriadLibrary: C qualities have correct intervals", "[NextChord][TriadLibrary]")
@@ -122,14 +150,15 @@ TEST_CASE("TriadLibrary: C qualities have correct intervals", "[NextChord][Triad
     CHECK(TriadLibrary::makeTriad(0, TriadQuality::Minor7, Key::C).type == ChordType::Seventh);
 }
 
-TEST_CASE("NextChordGenerator: pool includes sevenths; drama reorders list", "[NextChord]")
+TEST_CASE("NextChordGenerator: pool includes sevenths and inversions; drama reorders list", "[NextChord]")
 {
     const auto& keyScale = ChordDatabase::getInstance().get(Key::C, Scale::Major);
     const auto current = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C);
 
     const auto candidates = NextChordGenerator::generate(current, keyScale, 0.0f);
-    // 112 unique sonorities − C major.
-    REQUIRE(candidates.size() == 111);
+    // Catalogue emits 432 named chords, but enharmonic equivalents collapse by (bass, pcs)
+    // (e.g. C+ ≡ E+ ≡ G#+, Csus2 ≡ Gsus4). Unique voicings minus current C: 371.
+    REQUIRE(candidates.size() == 371);
 
     // drama=0 → softest first (monotone non-decreasing tension).
     for (std::size_t i = 1; i < candidates.size(); ++i)
@@ -142,6 +171,18 @@ TEST_CASE("NextChordGenerator: pool includes sevenths; drama reorders list", "[N
     REQUIRE(findByPcs(candidates, { 0, 4, 7, 10 }) != nullptr);   // C7
     REQUIRE(findByPcs(candidates, { 2, 5, 9, 0 }) != nullptr);    // Dm7
     REQUIRE(findByPcs(candidates, { 7, 11, 2, 5 }) != nullptr);   // G7
+
+    // Inversions of the current harmony are offered as separate smooth moves.
+    const auto findBySymbol = [&](const std::string& symbol) -> const NextChordCandidate*
+    {
+        for (const auto& c : candidates)
+            if (c.chord.symbol == symbol)
+                return &c;
+        return nullptr;
+    };
+    REQUIRE(findBySymbol("C/E") != nullptr);
+    REQUIRE(findBySymbol("C/G") != nullptr);
+    REQUIRE(findBySymbol("C") == nullptr); // current voicing excluded
 
     const auto* am = findByPcs(candidates, { 9, 0, 4 });
     REQUIRE(am != nullptr);
@@ -159,6 +200,32 @@ TEST_CASE("NextChordGenerator: pool includes sevenths; drama reorders list", "[N
     REQUIRE(wild.size() == candidates.size());
     for (std::size_t i = 1; i < wild.size(); ++i)
         CHECK(wild[i - 1].tensionPercent >= wild[i].tensionPercent);
+}
+
+TEST_CASE("NextChordScorer: closer voice-leading and inversions rank as lower tension", "[NextChord]")
+{
+    const auto& keyScale = ChordDatabase::getInstance().get(Key::C, Scale::Major);
+    const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C, 0);
+    const auto cOverE = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C, 1);
+    const auto cOverG = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C, 2);
+    const auto g = TriadLibrary::makeTriad(7, TriadQuality::Major, Key::C, 0);
+    const auto fs = TriadLibrary::makeTriad(6, TriadQuality::Major, Key::C, 0);
+    const auto am = TriadLibrary::makeTriad(9, TriadQuality::Minor, Key::C, 0);
+    const auto gOverB = TriadLibrary::makeTriad(7, TriadQuality::Major, Key::C, 1); // G/B
+
+    // Pure inversion of the same chord is softer than a remote root jump.
+    CHECK(tensionOf(c, cOverE, keyScale, Degree::I) < tensionOf(c, fs, keyScale));
+    CHECK(tensionOf(c, cOverG, keyScale, Degree::I) < tensionOf(c, fs, keyScale));
+
+    // Same-harmony inversion is softer than a typical diatonic neighbour on common drama.
+    CHECK(tensionOf(c, cOverE, keyScale, Degree::I) < tensionOf(c, am, keyScale, Degree::VI));
+
+    // Voice-leading: C → G/B (stepwise bass C→B, shared G) softer than C → G root position
+    // (bass leap C→G) — closer bass motion = less tension.
+    CHECK(tensionOf(c, gOverB, keyScale, Degree::V) < tensionOf(c, g, keyScale, Degree::V));
+
+    // MIDI voice-leading cost itself is lower for inversion change than for a tritone jump.
+    CHECK(NextChordScorer::voiceLeadingCost(c, cOverE) < NextChordScorer::voiceLeadingCost(c, fs));
 }
 
 TEST_CASE("NextChordScorer: Am softer than F#; diatonic primaries beat parallel minor", "[NextChord]")

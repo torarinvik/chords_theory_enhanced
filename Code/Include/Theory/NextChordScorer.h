@@ -20,7 +20,9 @@ namespace theory
 // mainly reorders the list toward that target.
 //
 // Layers (combined into tensionPercent):
-//  - surface: common tones, voice leading, directed root / circle-of-fifths motion, chromaticism
+//  - surface: common tones, voice leading (bass + upper voices), bass motion, directed root /
+//    circle-of-fifths motion, chromaticism — closer voice-leading / bass steps = less tension;
+//    pure inversions of the same harmony are especially soft
 //  - quality: target sonority colour + same-root colour changes + blues I7/IV7
 //  - function: scale-family degree bias + quality-vs-degree fitness + diatonic 7th colour
 //  - grammar: classic progressions (ii–V, V–I, plagal, deceptive, …) + falling-fifths glue
@@ -56,10 +58,16 @@ public:
                              const SequenceContext& sequence = {});
 
     static int commonToneCount(const Chord& a, const Chord& b);
+    // Harmonic root: note with positionInChord == 1 when present (correct for slash-chord
+    // inversions where notes are bass-first); otherwise notes.front().
     static int rootPitchClass(const Chord& chord);
+    // Lowest sounding tone = first entry in the chord's bass-first note array.
+    static int bassPitchClass(const Chord& chord);
     static int pitchClassDistance(int a, int b);
     static int directedRootInterval(int fromRoot, int toRoot); // 0–11 steps up
     static int circleOfFifthsDistance(int rootA, int rootB);
+    // Closed-voicing MIDI distance between from→to (0 = identical/perfectly smooth, 1 = max).
+    // Closer voice-leading (including inversion changes that keep common tones) scores lower.
     static float voiceLeadingCost(const Chord& from, const Chord& to);
     static bool isDiatonicChord(const Chord& chord, const KeyScaleData& keyScale);
     static int nonScaleToneCount(const Chord& chord, const KeyScaleData& keyScale);

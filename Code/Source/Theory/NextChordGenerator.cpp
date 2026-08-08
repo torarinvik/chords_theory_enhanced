@@ -1,6 +1,8 @@
 #include "Theory/NextChordGenerator.h"
 
 #include <set>
+#include <tuple>
+#include <vector>
 
 #include "Theory/NextChordScorer.h"
 #include "Theory/TriadLibrary.h"
@@ -18,9 +20,18 @@ namespace
         return pcs;
     }
 
-    bool sameHarmony(const Chord& a, const Chord& b)
+    // Bass pitch class + full pitch-class set: inversions of the same harmony are distinct.
+    using VoicingKey = std::tuple<int, std::set<int>>;
+
+    VoicingKey voicingKey(const Chord& chord)
     {
-        return pitchClassSet(a) == pitchClassSet(b);
+        const int bass = chord.notes.empty() ? -1 : chord.notes.front().getPitchClass();
+        return { bass, pitchClassSet(chord) };
+    }
+
+    bool sameVoicing(const Chord& a, const Chord& b)
+    {
+        return voicingKey(a) == voicingKey(b);
     }
 
     std::optional<Degree> matchingDegree(const Chord& sonority, const KeyScaleData& keyScale)
@@ -48,15 +59,17 @@ std::vector<NextChordCandidate> NextChordGenerator::generate(const Chord& curren
 
     std::vector<NextChordCandidate> candidates;
     candidates.reserve(catalogue.size());
-    std::set<std::set<int>> seenPitchClassSets;
+    std::set<VoicingKey> seenVoicings;
 
     for (const auto& chord : catalogue)
     {
-        const auto pcs = pitchClassSet(chord);
-        if (!seenPitchClassSets.insert(pcs).second)
+        // Keep inversions as separate candidates; only collapse exact duplicates (same bass + pcs).
+        if (!seenVoicings.insert(voicingKey(chord)).second)
             continue;
 
-        if (sameHarmony(chord, currentChord))
+        // Skip the current voicing itself, but allow other inversions of the same harmony
+        // (e.g. C → C/E is a valid smooth next-chord move).
+        if (sameVoicing(chord, currentChord))
             continue;
 
         NextChordCandidate candidate;

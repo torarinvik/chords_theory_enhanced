@@ -48,6 +48,10 @@ public:
         // preset load) - the owner uses this to keep persisted session state in sync, rather than
         // needing a separate hook per mutation path. Mirrors MidiEditor::Listener::onContentChanged.
         virtual void onContentChanged() = 0;
+
+        // Click on a chord-lane label in the MidiEditor - bubbles the live MIDI notes for that
+        // block so the owner can audition them (synth + host MIDI). Pure bubble-up.
+        virtual void onChordBlockPreviewRequested(const std::vector<int>& midiNotes) = 0;
     };
 
     // progressionPlayer is nullable (defaults to null so any test constructing without one keeps
@@ -97,6 +101,7 @@ private:
     void onChordFileDropped(double startBeat, const juce::String& filePath) override;
     void onContentChanged() override;
     void onPlaybackStateChanged(bool isPlaying) override;
+    void onChordBlockPreviewRequested(const std::vector<int>& midiNotes) override;
     void onPresetSelected(const theory::ProgressionPreset& preset) override;
     void onProgressionDragStarted() override;
     void onButtonClick(const std::string& componentID) override;

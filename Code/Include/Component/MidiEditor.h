@@ -55,6 +55,14 @@ public:
         // the very notes a playing loop was referencing). Default no-op, same convention as
         // onContentChanged.
         virtual void onPlaybackStateChanged(bool isPlaying) { juce::ignoreUnused(isPlaying); }
+
+        // Click (not drag) on a chord-lane label - midiNotes are the live piano-roll notes still
+        // tagged with that block's id (what the user currently sees for that chord), sorted
+        // ascending. Empty when every note was individually deleted. Default no-op.
+        virtual void onChordBlockPreviewRequested(const std::vector<int>& midiNotes)
+        {
+            juce::ignoreUnused(midiNotes);
+        }
     };
 
     // Exposed so callers spacing consecutive chords/presets one bar apart (see

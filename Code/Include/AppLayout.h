@@ -46,6 +46,7 @@ private:
     void onChordFileDropped(double startBeat, const juce::String& filePath) override;
     void onProgressionDragStarted() override;
     void onContentChanged() override;
+    void onChordBlockPreviewRequested(const std::vector<int>& midiNotes) override;
 
     // _mainSection's own panel-switch mechanism (GridLayout::setVisible()) unconditionally shows
     // every component registered in a panel the moment it becomes active again - including

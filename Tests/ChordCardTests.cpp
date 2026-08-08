@@ -59,6 +59,15 @@ namespace
     {
         return ChordDatabase::getInstance().get(Key::C, Scale::Major).degrees.front().chords.front();
     }
+
+    // Both nelement::SVGButton and nelement::TextButton wrap a single internal juce::Button child.
+    void triggerButtonClick(juce::Component& buttonWrapper)
+    {
+        auto* button = dynamic_cast<juce::Button*>(buttonWrapper.getChildComponent(0));
+        REQUIRE(button != nullptr);
+        button->triggerClick();
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+    }
 }
 
 TEST_CASE("ChordCard's clickable area is the card itself, not one of its decorative labels", "[ChordCard]")
@@ -67,8 +76,7 @@ TEST_CASE("ChordCard's clickable area is the card itself, not one of its decorat
     // and previously covered the card's entire clickable area (see the
     // setInterceptsMouseClicks(false, false) fix on both labels in ChordCard's constructor) -
     // without that fix, hit-testing at any point on the card resolves to a label instead of the
-    // card, and no mouse event ever reaches ChordCard's own mouseDown/mouseDrag/mouseUp/
-    // mouseDoubleClick.
+    // card, and no mouse event ever reaches ChordCard's own mouseDown/mouseDrag/mouseUp.
     ChordCard card("test-card", Degree::I);
     card.setChord(getTestChord());
     card.setBounds(0, 0, 120, 60);
@@ -77,10 +85,14 @@ TEST_CASE("ChordCard's clickable area is the card itself, not one of its decorat
     CHECK(card.getComponentAt(60, 30) == &card);
 }
 
-TEST_CASE("ChordCard: a plain click (no drag) fires onChordPreviewRequested, not onChordChanged/onChordDragStarted", "[ChordCard]")
+TEST_CASE("ChordCard: a plain click on the card body previews only, does not open the voicing banner", "[ChordCard]")
 {
+    const auto& degreeI = ChordDatabase::getInstance().get(Key::C, Scale::Major).degrees.front();
+    const auto& chord = degreeI.chords.front();
+
     ChordCard card("test-card", Degree::I);
-    card.setChord(getTestChord());
+    card.setChord(chord);
+    card.setAvailableVoicings(degreeI.chords);
     card.setBounds(0, 0, 120, 60);
 
     RecordingListener listener;
@@ -91,8 +103,66 @@ TEST_CASE("ChordCard: a plain click (no drag) fires onChordPreviewRequested, not
     card.mouseUp(makeMouseEvent(card, pos, pos));
 
     CHECK(listener.previewCount == 1);
+    CHECK(listener.voicingSelectorRequestedCount == 0);
     CHECK(listener.dragStartedCount == 0);
     CHECK(listener.changedCount == 0);
+
+    card.removeListener(&listener);
+}
+
+TEST_CASE("ChordCard: voicing button opens the selector with inversions near the default triad", "[ChordCard]")
+{
+    const auto& degreeI = ChordDatabase::getInstance().get(Key::C, Scale::Major).degrees.front();
+    const auto& chord = degreeI.chords.front();
+
+    ChordCard card("test-card", Degree::I);
+    card.setChord(chord);
+    card.setAvailableVoicings(degreeI.chords);
+    card.setBounds(0, 0, 120, 60);
+    card.resized();
+
+    RecordingListener listener;
+    card.addListener(&listener);
+
+    auto* voicingButton = card.findChildWithID("test-card-voicing");
+    REQUIRE(voicingButton != nullptr);
+    REQUIRE(voicingButton->isVisible());
+    triggerButtonClick(*voicingButton);
+
+    CHECK(listener.voicingSelectorRequestedCount == 1);
+    CHECK(listener.previewCount == 0);
+    REQUIRE(listener.lastVoicingSelectorDegree.has_value());
+    CHECK(*listener.lastVoicingSelectorDegree == Degree::I);
+    CHECK(listener.lastCurrentSymbol == chord.symbol);
+
+    // Inversions of the default triad sit right after it (not buried after every extension).
+    REQUIRE(listener.lastAvailableVoicings.size() >= 3);
+    CHECK(listener.lastAvailableVoicings[0].symbol == "C");
+    CHECK(listener.lastAvailableVoicings[1].symbol == "C/E");
+    CHECK(listener.lastAvailableVoicings[2].symbol == "C/G");
+
+    card.removeListener(&listener);
+}
+
+TEST_CASE("ChordCard: voicing button is hidden when there is nothing to switch to", "[ChordCard]")
+{
+    ChordCard card("test-card", Degree::I);
+    card.setChord(getTestChord());
+    card.setBounds(0, 0, 120, 60);
+    card.resized();
+
+    auto* voicingButton = card.findChildWithID("test-card-voicing");
+    REQUIRE(voicingButton != nullptr);
+    CHECK_FALSE(voicingButton->isVisible());
+
+    // Still safe to click the card body for preview.
+    RecordingListener listener;
+    card.addListener(&listener);
+    const juce::Point<float> pos { 10.0f, 10.0f };
+    card.mouseDown(makeMouseEvent(card, pos, pos));
+    card.mouseUp(makeMouseEvent(card, pos, pos));
+    CHECK(listener.previewCount == 1);
+    CHECK(listener.voicingSelectorRequestedCount == 0);
 
     card.removeListener(&listener);
 }
@@ -115,54 +185,7 @@ TEST_CASE("ChordCard: dragging past the threshold fires onChordDragStarted, not 
 
     CHECK(listener.dragStartedCount == 1);
     CHECK(listener.previewCount == 0);
-
-    card.removeListener(&listener);
-}
-
-TEST_CASE("ChordCard: mouseDoubleClick with no available voicings is a safe no-op", "[ChordCard]")
-{
-    ChordCard card("test-card", Degree::I);
-    card.setChord(getTestChord());
-    card.setBounds(0, 0, 120, 60);
-    // Deliberately no setAvailableVoicings() call - exercises the early-return branch.
-
-    RecordingListener listener;
-    card.addListener(&listener);
-
-    const juce::Point<float> pos { 10.0f, 10.0f };
-    REQUIRE_NOTHROW(card.mouseDoubleClick(makeMouseEvent(card, pos, pos, 2)));
-
-    CHECK(listener.previewCount == 0);
     CHECK(listener.voicingSelectorRequestedCount == 0);
-
-    card.removeListener(&listener);
-}
-
-TEST_CASE("ChordCard: mouseDoubleClick with available voicings fires onVoicingSelectorRequested with the card's own data", "[ChordCard]")
-{
-    const auto& degreeI = ChordDatabase::getInstance().get(Key::C, Scale::Major).degrees.front();
-    const auto& chord = degreeI.chords.front();
-
-    ChordCard card("test-card", Degree::I);
-    card.setChord(chord);
-    card.setAvailableVoicings(degreeI.chords);
-    card.setBounds(0, 0, 120, 60);
-
-    RecordingListener listener;
-    card.addListener(&listener);
-
-    const juce::Point<float> pos { 10.0f, 10.0f };
-    card.mouseDoubleClick(makeMouseEvent(card, pos, pos, 2));
-
-    CHECK(listener.voicingSelectorRequestedCount == 1);
-    REQUIRE(listener.lastVoicingSelectorDegree.has_value());
-    CHECK(*listener.lastVoicingSelectorDegree == Degree::I);
-    CHECK(listener.lastAvailableVoicings.size() == degreeI.chords.size());
-    CHECK(listener.lastCurrentSymbol == chord.symbol);
-
-    // Selection now happens via the voicing selector, not the card - a double-click never
-    // touches onChordChanged itself.
-    CHECK(listener.changedCount == 0);
 
     card.removeListener(&listener);
 }

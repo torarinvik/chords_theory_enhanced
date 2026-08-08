@@ -174,6 +174,12 @@ void ProgressionEditor::onContentChanged()
         listener->onContentChanged();
 }
 
+void ProgressionEditor::onChordBlockPreviewRequested(const std::vector<int>& midiNotes)
+{
+    for (auto* listener : _listeners)
+        listener->onChordBlockPreviewRequested(midiNotes);
+}
+
 void ProgressionEditor::onPlaybackStateChanged(bool isPlaying)
 {
     // Not the click handler's job to set this directly - it needs to stay correct even when

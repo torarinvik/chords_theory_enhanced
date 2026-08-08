@@ -1144,6 +1144,22 @@ int NextChordScorer::rootPitchClass(const Chord& chord)
 {
     if (chord.notes.empty())
         return 0;
+
+    // Inversions store notes bass-first but keep positionInChord roles (1 = root). Prefer that so
+    // C/E reports root C, not bass E. Fall back to front for reconstructed/incomplete chords.
+    for (const auto& note : chord.notes)
+    {
+        if (note.positionInChord == 1)
+            return note.getPitchClass();
+    }
+
+    return chord.notes.front().getPitchClass();
+}
+
+int NextChordScorer::bassPitchClass(const Chord& chord)
+{
+    if (chord.notes.empty())
+        return 0;
     return chord.notes.front().getPitchClass();
 }
 
@@ -1177,19 +1193,42 @@ int NextChordScorer::commonToneCount(const Chord& a, const Chord& b)
 
 float NextChordScorer::voiceLeadingCost(const Chord& from, const Chord& to)
 {
-    auto fromPcs = pitchClassSet(from);
-    auto toPcs = pitchClassSet(to);
-    if (fromPcs.empty() || toPcs.empty())
-        return 6.0f;
+    if (from.notes.empty() || to.notes.empty())
+        return 1.0f;
 
-    std::vector<int> src(fromPcs.begin(), fromPcs.end());
-    std::vector<int> dst(toPcs.begin(), toPcs.end());
+    // Bass motion is first-class: closer bass steps (including common-tone pedals and
+    // stepwise inversions) rank smoother than leaps. Upper voices use pitch-class
+    // matching so pure inversions of the same harmony aren't punished for register shifts
+    // the way absolute-MIDI pairing would be.
+    const float bassCost = static_cast<float>(
+        pitchClassDistance(bassPitchClass(from), bassPitchClass(to)));
+
+    std::vector<int> fromPcs;
+    std::vector<int> toPcs;
+    fromPcs.reserve(from.notes.size());
+    toPcs.reserve(to.notes.size());
+    for (const auto& note : from.notes)
+        fromPcs.push_back(note.getPitchClass());
+    for (const auto& note : to.notes)
+        toPcs.push_back(note.getPitchClass());
+
+    // Match non-bass tones after removing one instance of each bass (already paid above).
+    const auto eraseOne = [](std::vector<int>& pcs, int value)
+    {
+        const auto it = std::find(pcs.begin(), pcs.end(), value);
+        if (it != pcs.end())
+            pcs.erase(it);
+    };
+    eraseOne(fromPcs, bassPitchClass(from));
+    eraseOne(toPcs, bassPitchClass(to));
+
+    auto& src = fromPcs;
+    auto& dst = toPcs;
     if (src.size() > dst.size())
         std::swap(src, dst);
 
-    float total = 0.0f;
+    float upperTotal = 0.0f;
     std::vector<bool> used(dst.size(), false);
-
     for (const int s : src)
     {
         float best = 6.0f;
@@ -1210,16 +1249,26 @@ float NextChordScorer::voiceLeadingCost(const Chord& from, const Chord& to)
         if (found)
         {
             used[bestIndex] = true;
-            total += best;
+            upperTotal += best;
         }
         else
         {
-            total += 3.0f;
+            upperTotal += 3.0f;
         }
     }
+    for (const bool wasUsed : used)
+    {
+        if (!wasUsed)
+            upperTotal += 2.0f; // added chord tone
+    }
 
-    const float denom = 4.0f * static_cast<float>(std::max<std::size_t>(src.size(), 1));
-    return std::clamp(total / denom, 0.0f, 1.0f);
+    // Bass weighted equal to one upper voice; upper motion averaged per remaining voice.
+    const float upperDenom = 6.0f * static_cast<float>(std::max<std::size_t>(src.size(), 1));
+    const float upper01 = src.empty() ? 0.0f : std::clamp(upperTotal / upperDenom, 0.0f, 1.0f);
+    const float bass01 = bassCost / 6.0f;
+
+    // Slightly prefer bass smoothness (inversions / stepwise bass lines).
+    return std::clamp(0.55f * bass01 + 0.45f * upper01, 0.0f, 1.0f);
 }
 
 bool NextChordScorer::isDiatonicChord(const Chord& chord, const KeyScaleData& keyScale)
@@ -1313,11 +1362,20 @@ void NextChordScorer::score(const Chord& currentChord, const KeyScaleData& keySc
 
     const int rootFrom = rootPitchClass(currentChord);
     const int rootTo = rootPitchClass(candidate.chord);
+    const int bassFrom = bassPitchClass(currentChord);
+    const int bassTo = bassPitchClass(candidate.chord);
     const int rootMin = pitchClassDistance(rootFrom, rootTo);
     const int rootDir = directedRootInterval(rootFrom, rootTo);
+    const int bassMin = pitchClassDistance(bassFrom, bassTo);
     const float rootTension = rootMotionTension(rootMin, rootDir);
+    // Closer bass motion = less tension (stepwise / common-bass inversions rank softest).
+    const float bassTension = static_cast<float>(bassMin) / 6.0f;
     const float fifthsTension = static_cast<float>(circleOfFifthsDistance(rootFrom, rootTo)) / 6.0f;
     const float vlTension = voiceLeadingCost(currentChord, candidate.chord);
+
+    const auto fromPcs = pitchClassSet(currentChord);
+    const auto toPcs = pitchClassSet(candidate.chord);
+    const bool pureInversionChange = fromPcs == toPcs && bassFrom != bassTo;
 
     const int outside = nonScaleToneCount(candidate.chord, keyScale);
     const float noteCount = std::max(1.0f, static_cast<float>(candidate.chord.notes.size()));
@@ -1423,17 +1481,21 @@ void NextChordScorer::score(const Chord& currentChord, const KeyScaleData& keySc
                                              fromDegree, toDegree, rootFrom, rootTo, rootDir);
 
     // Surface blend — carries most of the absolute tension so soft idioms stay differentiable.
-    constexpr float wCt = 0.24f;
-    constexpr float wRoot = 0.16f;
-    constexpr float wFifths = 0.09f;
-    constexpr float wVl = 0.18f;
-    constexpr float wChrom = 0.13f;
+    // Voice-leading + bass motion are weighted so closer transitions (including inversions with
+    // small bass steps) rank as lower tension, without drowning progression grammar.
+    constexpr float wCt = 0.20f;
+    constexpr float wRoot = 0.13f;
+    constexpr float wBass = 0.10f;
+    constexpr float wFifths = 0.08f;
+    constexpr float wVl = 0.22f;
+    constexpr float wChrom = 0.12f;
     constexpr float wQual = 0.08f;
-    constexpr float weightSum = wCt + wRoot + wFifths + wVl + wChrom + wQual;
+    constexpr float weightSum = wCt + wRoot + wBass + wFifths + wVl + wChrom + wQual;
 
     float tension01 =
         (wCt * commonToneTension +
          wRoot * rootTension +
+         wBass * bassTension +
          wFifths * fifthsTension +
          wVl * vlTension +
          wChrom * chromaticism +
@@ -1441,12 +1503,18 @@ void NextChordScorer::score(const Chord& currentChord, const KeyScaleData& keySc
 
     tension01 += sameRootPenalty * 0.85f;
 
+    // Same harmony, different bass only (e.g. C → C/E): very smooth colour of the same chord.
+    if (pureInversionChange)
+        tension01 *= 0.45f;
+
     // Theory layers: scaled so they reorder within a band without collapsing to 0.
+    // Grammar is slightly amplified so classic moves (ii–V, V–I) still beat merely
+    // stepwise bass motion to a weaker function.
     const float theoryScale = lerp(0.85f, 0.35f, drama01);
     float theory =
         functional * 0.9f
         + fitness
-        + grammar
+        + grammar * 1.45f
         + roleBias
         + secondaryOffset
         + tritoneSub.offset
@@ -1513,6 +1581,11 @@ void NextChordScorer::score(const Chord& currentChord, const KeyScaleData& keySc
     if (seqBias.tag != nullptr)
         reason << " · " << seqBias.tag;
 
+    if (pureInversionChange)
+        reason << " · inversion";
+    else if (bassTo != rootTo && !candidate.chord.notes.empty())
+        reason << " · /" << candidate.chord.notes.front().readableNote;
+
     if (shared > 0)
         reason << " · " << shared << " common";
 
@@ -1524,6 +1597,13 @@ void NextChordScorer::score(const Chord& currentChord, const KeyScaleData& keySc
         reason << " · tritone";
     else if (rootMin == 1)
         reason << " · half-step root";
+
+    if (bassMin == 0 && bassFrom != rootFrom)
+        reason << " · pedal bass";
+    else if (bassMin == 1)
+        reason << " · step bass";
+    else if (bassMin == 2)
+        reason << " · skip bass";
 
     if (rootMin == 0 && sameRootPenalty > 0.0f)
         reason << " · colour change";
