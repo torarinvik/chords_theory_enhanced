@@ -7,6 +7,7 @@
 #include "Theory/ChordDatabase.h"
 #include "Theory/MidiEditorState.h"
 #include "Theory/HarmonicPredicates.h"
+#include "Theory/MechanismCandidateGenerator.h"
 #include "Theory/NextChordGenerator.h"
 #include "Theory/NextChordScorer.h"
 #include "Theory/NextChordSequenceContext.h"
@@ -737,6 +738,52 @@ TEST_CASE("NextChordGenerator: top results are distinct harmonic ideas, not inve
     }
     // Top 10 must not collapse to a handful of F-family inversions.
     CHECK(ideas.size() >= 8);
+}
+
+TEST_CASE("Mechanism + lookahead: after C, A7 context prefers Dm; D7 prefers G", "[NextChord]")
+{
+    const auto& keyScale = ChordDatabase::getInstance().get(Key::C, Scale::Major);
+    const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C);
+    const auto a7 = TriadLibrary::makeTriad(9, TriadQuality::Dominant7, Key::C);
+    const auto d7 = TriadLibrary::makeTriad(2, TriadQuality::Dominant7, Key::C);
+    const auto dm = TriadLibrary::makeTriad(2, TriadQuality::Minor, Key::C);
+    const auto g = TriadLibrary::makeTriad(7, TriadQuality::Major, Key::C);
+    const auto fs = TriadLibrary::makeTriad(6, TriadQuality::Major, Key::C);
+
+    // Isolated: A7 and D7 are idiomatic colour from C.
+    CHECK(rankingScoreOf(c, a7, keyScale) > rankingScoreOf(c, fs, keyScale));
+    CHECK(rankingScoreOf(c, d7, keyScale) > rankingScoreOf(c, fs, keyScale));
+
+    // Context C → A7: next should prefer Dm over remote F#.
+    const auto afterA7 = history({ { c, Degree::I } });
+    CHECK(rankingScoreOf(a7, dm, keyScale, Degree::II, NextChordScorer::kDefaultDrama, afterA7)
+          > rankingScoreOf(a7, fs, keyScale, std::nullopt, NextChordScorer::kDefaultDrama, afterA7));
+
+    // Context C → D7: next should prefer G over remote F#.
+    CHECK(rankingScoreOf(d7, g, keyScale, Degree::V, NextChordScorer::kDefaultDrama, afterA7)
+          > rankingScoreOf(d7, fs, keyScale, std::nullopt, NextChordScorer::kDefaultDrama, afterA7));
+
+    // Generate from A7 with history C: Dm idea should rank in the top half.
+    const auto fromA7 = NextChordGenerator::generate(a7, keyScale, 0.35f, afterA7);
+    REQUIRE(fromA7.size() >= 5);
+    int dmRank = -1;
+    for (std::size_t i = 0; i < fromA7.size(); ++i)
+    {
+        if (NextChordScorer::rootPitchClass(fromA7[i].chord) == 2
+            && NextChordScorer::isMinorishQuality(NextChordScorer::detectTriadQuality(fromA7[i].chord)))
+        {
+            dmRank = static_cast<int>(i);
+            break;
+        }
+    }
+    REQUIRE(dmRank >= 0);
+    CHECK(dmRank < static_cast<int>(fromA7.size()) / 2);
+
+    // Lookahead: Db7 has strong productive path to C.
+    const float prodDb7 = theory::lookaheadProductivity(
+        TriadLibrary::makeTriad(1, TriadQuality::Dominant7, Key::C), keyScale, 0.5f);
+    const float prodFs = theory::lookaheadProductivity(fs, keyScale, 0.5f);
+    CHECK(prodDb7 > prodFs);
 }
 
 TEST_CASE("HarmonicPredicates: F/C is never a tritone substitution; Db7 can be subV/I", "[NextChord]")

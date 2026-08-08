@@ -5,6 +5,7 @@
 #include <tuple>
 #include <vector>
 
+#include "Theory/MechanismCandidateGenerator.h"
 #include "Theory/NextChordScorer.h"
 #include "Theory/TriadLibrary.h"
 
@@ -34,7 +35,6 @@ namespace
         return voicingKey(a) == voicingKey(b);
     }
 
-    // Harmonic idea identity: harmonic root + quality (inversions of F collapse to one idea).
     using IdeaKey = std::tuple<int, int>; // rootPc, quality enum
 
     IdeaKey ideaKey(const Chord& chord)
@@ -57,7 +57,6 @@ namespace
         }
         return std::nullopt;
     }
-
 }
 
 std::vector<NextChordCandidate> NextChordGenerator::generate(const Chord& currentChord, const KeyScaleData& keyScale,
@@ -66,31 +65,65 @@ std::vector<NextChordCandidate> NextChordGenerator::generate(const Chord& curren
     if (currentChord.notes.empty())
         return {};
 
-    const auto catalogue = TriadLibrary::allTriads(keyScale.key);
-
     std::vector<NextChordCandidate> candidates;
-    candidates.reserve(catalogue.size());
     std::set<VoicingKey> seenVoicings;
 
-    for (const auto& chord : catalogue)
+    auto consider = [&](NextChordCandidate candidate)
     {
-        if (!seenVoicings.insert(voicingKey(chord)).second)
-            continue;
+        if (candidate.chord.notes.empty())
+            return;
+        if (sameVoicing(candidate.chord, currentChord))
+            return;
+        if (!seenVoicings.insert(voicingKey(candidate.chord)).second)
+            return;
+        if (!candidate.degree)
+            candidate.degree = matchingDegree(candidate.chord, keyScale);
+        candidates.push_back(std::move(candidate));
+    };
 
-        if (sameVoicing(chord, currentChord))
-            continue;
+    // 1) Mechanism-driven ideas first (functionally motivated).
+    for (auto& c : MechanismCandidateGenerator::generate(currentChord, keyScale, sequence))
+        consider(std::move(c));
 
+    // 2) Full catalogue for coverage (still idea-deduped later).
+    for (const auto& chord : TriadLibrary::allTriads(keyScale.key))
+    {
         NextChordCandidate candidate;
         candidate.chord = chord;
         candidate.degree = matchingDegree(chord, keyScale);
-        candidates.push_back(std::move(candidate));
+        consider(std::move(candidate));
     }
 
     NextChordScorer::scoreAndSort(currentChord, keyScale, candidates, drama01, sequence);
 
-    // Diversity: keep one default voicing per harmonic idea (root + quality), preferring
-    // root-position. Remaining inversions/extensions of the same idea are dropped from the
-    // top-level list so the UI is not flooded with F/C, F5/C, Fm/C, …
+    // 3) One-step lookahead: reward productive tension (strong available continuation).
+    constexpr float kLookaheadWeight = 0.22f;
+    for (auto& candidate : candidates)
+    {
+        const float productivity = lookaheadProductivity(candidate.chord, keyScale, drama01);
+        candidate.rankingScore += kLookaheadWeight * productivity;
+        if (productivity > 0.55f && candidate.metrics.tension > 0.4f)
+        {
+            // Tag productive tension lightly if reason is sparse.
+            if (candidate.reasonLabel.find("→") == std::string::npos
+                && candidate.metrics.resolution > 0.35f)
+            {
+                // Keep label clean; productivity only affects rank.
+            }
+        }
+    }
+
+    std::stable_sort(candidates.begin(), candidates.end(),
+        [](const NextChordCandidate& a, const NextChordCandidate& b)
+        {
+            if (std::abs(a.rankingScore - b.rankingScore) > 1.0e-5f)
+                return a.rankingScore > b.rankingScore;
+            if (a.fitPercent != b.fitPercent)
+                return a.fitPercent > b.fitPercent;
+            return a.chord.symbol < b.chord.symbol;
+        });
+
+    // 4) Diversity: one voicing per harmonic idea (root + quality).
     std::vector<NextChordCandidate> diverse;
     diverse.reserve(candidates.size());
     std::map<IdeaKey, std::size_t> bestIndexByIdea;
@@ -98,16 +131,10 @@ std::vector<NextChordCandidate> NextChordGenerator::generate(const Chord& curren
     for (std::size_t i = 0; i < candidates.size(); ++i)
     {
         const auto key = ideaKey(candidates[i].chord);
-        const auto it = bestIndexByIdea.find(key);
-        if (it == bestIndexByIdea.end())
-        {
-            bestIndexByIdea.emplace(key, diverse.size());
-            diverse.push_back(std::move(candidates[i]));
+        if (bestIndexByIdea.find(key) != bestIndexByIdea.end())
             continue;
-        }
-
-        // Already have this idea higher in the ranked list — skip lower-ranked voicings.
-        // (scoreAndSort already ordered best-first for the drama target.)
+        bestIndexByIdea.emplace(key, diverse.size());
+        diverse.push_back(std::move(candidates[i]));
     }
 
     return diverse;
