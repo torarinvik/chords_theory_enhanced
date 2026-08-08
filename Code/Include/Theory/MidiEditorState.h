@@ -5,6 +5,8 @@
 
 #include <juce_core/juce_core.h>
 
+#include "Theory/ChordType.h"
+#include "Theory/NoteName.h"
 #include "Theory/ProgressionSlot.h"
 
 namespace theory
@@ -38,12 +40,21 @@ struct MidiEditorChordBlockState
     double lengthBeats = 1.0;
     ProgressionSlot sourceSlot; // frozen at drop time - degree + the resolved chord's popularityOrder
 
+    // Frozen harmony at drop/load time (bass-first notes + symbol). Preferred by next-chord
+    // sequence reconstruction so inversions keep true roots. Empty on legacy sessions.
+    std::string frozenSymbol;
+    ChordType frozenType = ChordType::Triad;
+    std::vector<NoteName> frozenNotes;
+
     bool operator==(const MidiEditorChordBlockState& other) const
     {
         return id == other.id && label == other.label
             && juce::approximatelyEqual(startBeat, other.startBeat)
             && juce::approximatelyEqual(lengthBeats, other.lengthBeats)
-            && sourceSlot == other.sourceSlot;
+            && sourceSlot == other.sourceSlot
+            && frozenSymbol == other.frozenSymbol
+            && frozenType == other.frozenType
+            && frozenNotes.size() == other.frozenNotes.size();
     }
 };
 

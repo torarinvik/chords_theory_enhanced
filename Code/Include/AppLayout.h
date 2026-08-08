@@ -62,7 +62,12 @@ private:
     void playChordToSynthAndHost(const theory::Chord& chord);
 
     // Updates the next-chord panel from a newly chosen "current" chord (and rebuilds sequence memory).
-    void setCurrentChordForSuggestions(const theory::Chord& chord);
+    // When pinCurrent is true, progression edits will not auto-retarget current to the last block.
+    void setCurrentChordForSuggestions(const theory::Chord& chord, bool pinCurrent = true);
+
+    // Follows the progression timeline: current = last chord block, history = everything before it.
+    // Clears any browser pin. No-op if the progression is empty.
+    void syncNextChordFromProgressionTail();
 
     // Rebuilds phrase-memory from the progression sequencer without changing the current chord.
     void refreshNextChordSequenceContext();
@@ -118,6 +123,10 @@ private:
     // Which degree the voicing selector is currently showing, if open - used to re-derive the
     // arrow-target x on resize and to know what to clear when the key/scale changes underneath it.
     std::optional<theory::Degree> _openVoicingDegree;
+
+    // When false (default after progression edits), next-chord current tracks the last block on
+    // the piano-roll. When true, the user pinned a current chord from the browser / next list.
+    bool _nextChordCurrentPinned = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AppLayout)
 };

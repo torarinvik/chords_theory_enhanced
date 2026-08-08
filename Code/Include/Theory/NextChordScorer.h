@@ -14,23 +14,22 @@
 namespace theory
 {
 
-// Stateless next-chord tension scoring.
-// drama01: target tension band for ranking (0 = softest first, 1 = wildest first).
-// Displayed tensionPercent is an objective "how colourful is this move" value; drama
-// mainly reorders the list toward that target.
+// Multi-metric next-chord scoring.
 //
-// Layers:
-//  - surface (absolute colour): common tones, voice leading, bass motion, root / fifths motion,
-//    chromaticism, quality — closer VL/bass = less tension
-//  - theory (reordering bias, capped on display): function, grammar, role, secondary/tritone,
-//    mixture, tendency, sequence memory, …
-// Surface sets most of the displayed tensionPercent; theory may pull it down only a little so
-// soft diatonic moves stay differentiated (no pile-up at 0). rankingScore keeps the full theory
-// effect for drama-based sorting.
+// Independent axes (CandidateMetrics):
+//   coherence, tension, surprise, voiceLeading, resolution, tensionDirection
+//
+// drama01 is the *desired tension* T* ∈ [0,1]:
+//   rankingScore = coherence − |tension − T*| + VL/resolution terms − surprise·(1−T*)
+// Soft moves are not ranked only by "diatonic + common tones"; wild moves must still clear a
+// minimum coherence gate.
 class NextChordScorer
 {
 public:
     static constexpr float kDefaultDrama = 0.35f;
+    // Minimum coherence (0–1) to appear in results; scales slightly with drama (wild allows a bit more colour).
+    static constexpr float kMinCoherenceSmooth = 0.22f;
+    static constexpr float kMinCoherenceWild = 0.14f;
 
     enum class ScaleFamily { Majorish, Minorish, ModalSoft, Diminishedish };
 
@@ -62,8 +61,7 @@ public:
     static int pitchClassDistance(int a, int b);
     static int directedRootInterval(int fromRoot, int toRoot); // 0–11 steps up
     static int circleOfFifthsDistance(int rootA, int rootB);
-    // Closed-voicing MIDI distance between from→to (0 = identical/perfectly smooth, 1 = max).
-    // Closer voice-leading (including inversion changes that keep common tones) scores lower.
+    // Closed-voicing distance between from→to (0 = smoothest, 1 = max motion).
     static float voiceLeadingCost(const Chord& from, const Chord& to);
     static bool isDiatonicChord(const Chord& chord, const KeyScaleData& keyScale);
     static int nonScaleToneCount(const Chord& chord, const KeyScaleData& keyScale);

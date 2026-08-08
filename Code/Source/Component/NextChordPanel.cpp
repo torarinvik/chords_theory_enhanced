@@ -51,8 +51,9 @@ void NextChordPanel::Row::paint(juce::Graphics& g)
     // Leave room for the play button on the left.
     auto content = bounds.withTrimmedLeft(kPlayButtonSize + 6);
 
-    auto tensionArea = content.removeFromRight(52);
-    auto nameArea = content.removeFromLeft(juce::jmin(80, content.getWidth() / 3));
+    // Right side: Fit + Tension meters (independent axes).
+    auto metersArea = content.removeFromRight(96);
+    auto nameArea = content.removeFromLeft(juce::jmin(72, content.getWidth() / 4));
     auto reasonArea = content;
 
     g.setFont(nui::Theme::newFont(nui::Theme::REGULAR, nui::Theme::SMALL));
@@ -63,15 +64,29 @@ void NextChordPanel::Row::paint(juce::Graphics& g)
     g.setColour(nui::Theme::newColor(nui::Theme::DISABLED).asJuce());
     g.drawText(_candidate.reasonLabel, reasonArea.reduced(4, 0), juce::Justification::centredLeft);
 
-    auto bar = tensionArea.reduced(4, 8).toFloat();
-    g.setColour(nui::Theme::newColor(nui::Theme::BACKGROUND).asJuce());
-    g.fillRoundedRectangle(bar, 3.0f);
-    const float fill = bar.getWidth() * (static_cast<float>(_candidate.tensionPercent) / 100.0f);
-    g.setColour(nui::Theme::newColor(nui::Theme::SECONDARY_ACCENT).asJuce());
-    g.fillRoundedRectangle(bar.withWidth(fill), 3.0f);
+    auto fitCol = metersArea.removeFromLeft(metersArea.getWidth() / 2);
+    auto tenCol = metersArea;
 
-    g.setColour(nui::Theme::newColor(nui::Theme::TEXT).asJuce());
-    g.drawText(juce::String(_candidate.tensionPercent), tensionArea, juce::Justification::centred);
+    const auto paintMeter = [&g](juce::Rectangle<int> area, int percent, const juce::String& label,
+                                 juce::Colour fillColour)
+    {
+        auto top = area.removeFromTop(area.getHeight() / 2);
+        g.setColour(nui::Theme::newColor(nui::Theme::DISABLED).asJuce());
+        g.setFont(nui::Theme::newFont(nui::Theme::REGULAR, nui::Theme::SMALL));
+        g.drawText(label + " " + juce::String(percent), top.reduced(2, 0), juce::Justification::centredLeft);
+
+        auto bar = area.reduced(4, 3).toFloat();
+        g.setColour(nui::Theme::newColor(nui::Theme::BACKGROUND).asJuce());
+        g.fillRoundedRectangle(bar, 2.0f);
+        const float fill = bar.getWidth() * (static_cast<float>(percent) / 100.0f);
+        g.setColour(fillColour);
+        g.fillRoundedRectangle(bar.withWidth(fill), 2.0f);
+    };
+
+    paintMeter(fitCol, _candidate.fitPercent, "F",
+               nui::Theme::newColor(nui::Theme::ACCENT).asJuce());
+    paintMeter(tenCol, _candidate.tensionPercent, "T",
+               nui::Theme::newColor(nui::Theme::SECONDARY_ACCENT).asJuce());
 }
 
 void NextChordPanel::Row::resized()

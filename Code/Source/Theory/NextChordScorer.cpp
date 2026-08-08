@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Theory/Degree.h"
+#include "Theory/HarmonicPredicates.h"
 #include "Theory/NoteConvertor.h"
 
 namespace theory
@@ -702,37 +703,16 @@ namespace
         const char* tag = nullptr;
     };
 
-    TritoneSubHit detectTritoneSub(int tonic, int rootTo, TriadQuality toQuality,
-                                   const KeyScaleData& keyScale)
+    TritoneSubHit detectTritoneSub(const Chord& chord, const KeyScaleData& keyScale)
     {
         TritoneSubHit out;
-        if (toQuality != TriadQuality::Dominant7 && toQuality != TriadQuality::Major)
+        // Strict predicate: dominant-seventh only; never bare major / slash chords like F/C.
+        const auto analysed = analyseTritoneSubstitution(chord, keyScale);
+        if (!analysed.hit || analysed.confidence < kMinLabelConfidence)
             return out;
-
-        // Classic: subV of I is bII7 (root = tonic+1), functions like V7.
-        // Also subV of any diatonic degree: root = resolveRoot + 6.
-        const int primaryV = mod12(tonic + 7);
-        if (mod12(rootTo - primaryV) == 6)
-        {
-            out = { true,
-                    (toQuality == TriadQuality::Dominant7) ? -0.10f : -0.05f,
-                    "tritone sub" };
-            return out;
-        }
-
-        // General subV/x: root is tritone from a diatonic secondary dominant root.
-        for (int d = 0; d < static_cast<int>(keyScale.scaleNotes.size()) && d < 7; ++d)
-        {
-            const int degRoot = keyScale.scaleNotes[static_cast<std::size_t>(d)].getPitchClass();
-            const int secondaryVRoot = mod12(degRoot + 7);
-            if (mod12(rootTo - secondaryVRoot) == 6 && degRoot != tonic)
-            {
-                out = { true,
-                        (toQuality == TriadQuality::Dominant7) ? -0.07f : -0.03f,
-                        "tritone sub" };
-                return out;
-            }
-        }
+        out.hit = true;
+        out.offset = -0.10f * analysed.confidence;
+        out.tag = "tritone sub";
         return out;
     }
 
@@ -1452,13 +1432,16 @@ void NextChordScorer::score(const Chord& currentChord, const KeyScaleData& keySc
 
     const float roleBias = roleTransitionBias(fromRole, toRole);
 
+    // Prefer formal predicates for secondary / subV (confidence-gated labels).
+    const auto secondaryPred = analyseSecondaryDominant(candidate.chord, keyScale);
     const auto secondary = detectSecondaryDominant(rootTo, toQuality, keyScale);
-    // Secondary dominants are a bit more welcome when leaving a tonic-area chord.
     float secondaryOffset = secondary.offset;
+    if (secondaryPred.hit && secondaryPred.confidence >= kMinLabelConfidence)
+        secondaryOffset = std::min(secondaryOffset, -0.08f * secondaryPred.confidence);
     if (secondary.hit && fromRole == HarmonicRole::Tonic)
         secondaryOffset *= 1.15f;
 
-    const auto tritoneSub = detectTritoneSub(tonic, rootTo, toQuality, keyScale);
+    const auto tritoneSub = detectTritoneSub(candidate.chord, keyScale);
     const auto mixture = detectModeMixture(tonic, rootTo, toQuality, family, toDiatonic);
     const auto mediant = detectChromaticMediant(rootFrom, rootTo, fromQuality, toQuality,
                                                 fromDiatonic, toDiatonic);
@@ -1518,10 +1501,8 @@ void NextChordScorer::score(const Chord& currentChord, const KeyScaleData& keySc
     // Small base so even the smoothest move reports a little colour (avoids a wall of 0%s).
     surface01 = std::max(surface01, 0.03f);
 
-    // Theory reorders preference; full effect goes into rankingScore. Display allows a moderate
-    // pull-down (enough for cadences to beat mere common-tone neighbours) without collapsing the
-    // whole soft band to 0%.
-    const float theoryScale = lerp(0.62f, 0.30f, drama01);
+    // --- Independent metrics (not collapsed until rankingScore) -------------------------
+    // Theory affinity: negative offsets mean "more expected / better fit".
     const float theory =
         functional * 0.9f
         + fitness
@@ -1539,36 +1520,109 @@ void NextChordScorer::score(const Chord& currentChord, const KeyScaleData& keySc
         + approach.offset
         + seqBias.offset;
 
-    const float theoryRaw = theory * theoryScale;
-    candidate.rankingScore = surface01 + theoryRaw;
+    // Coherence: invert theory affinity into 0–1 fit, with a diatonic/grammar floor.
+    float coherence = 0.55f - theory; // theory≈−0.3 → high fit; theory≈+0.2 → lower fit
+    if (toDiatonic)
+        coherence += 0.08f;
+    if (grammar < -0.05f)
+        coherence += 0.06f;
+    if (secondaryPred.hit && secondaryPred.confidence >= kMinLabelConfidence)
+        coherence += 0.10f * secondaryPred.confidence;
+    if (tritoneSub.hit)
+        coherence += 0.06f;
+    if (seqBias.offset < -0.02f)
+        coherence += 0.05f;
+    if (!toDiatonic && theory > -0.02f && !secondaryPred.hit && !tritoneSub.hit)
+        coherence -= 0.08f; // random chroma without function
+    coherence = std::clamp(coherence, 0.0f, 1.0f);
 
-    // Cap display pull-down: large enough for V–I / ii–V to win over weak common-tone moves,
-    // small enough that soft diatonics stay spread above zero.
-    constexpr float kMaxTheoryPullDown = 0.18f;
-    const float theoryForDisplay = theoryRaw < 0.0f
-        ? std::max(theoryRaw, -kMaxTheoryPullDown)
-        : theoryRaw * 0.9f;
+    // Tension: absolute surface colour (objective), mild boost for dominant function.
+    float tension = surface01;
+    if (isDominantLike(toQuality))
+        tension = std::min(1.0f, tension + 0.08f);
+    if (toQuality == TriadQuality::Diminished || toQuality == TriadQuality::Augmented)
+        tension = std::min(1.0f, tension + 0.06f);
+    tension = std::clamp(tension, 0.02f, 1.0f);
 
-    float display01 = std::clamp(surface01 + theoryForDisplay, 0.0f, 1.0f);
-    // Map into 2–100 so the UI never shows a dead "0" for a real candidate (identical current
-    // voicing is excluded by the generator). Keeps relative order inside the soft band.
-    const int displayPercent = 2 + static_cast<int>(std::round(display01 * 98.0f));
-    candidate.tensionPercent = std::clamp(displayPercent, 2, 100);
+    // Surprise: unexpectedness (chromatic + remote roots + low grammar), not the same as tension.
+    float surprise = 0.35f * chromaticism
+        + 0.25f * fifthsTension
+        + 0.20f * (toDiatonic ? 0.0f : 0.55f)
+        + 0.20f * std::clamp(0.15f + theory, 0.0f, 1.0f); // unexpected if theory affinity weak
+    if (grammar < -0.08f)
+        surprise *= 0.55f; // classic cadences are not surprising
+    surprise = std::clamp(surprise, 0.0f, 1.0f);
 
-    // Reason label: degree/role · grammar · idioms · surface cues
+    // Voice-leading smoothness (1 = smoothest).
+    const float voiceLeading = std::clamp(1.0f - vlTension, 0.0f, 1.0f);
+
+    // Resolution strength: secondary/subV/tendency/resolve engines.
+    float resolution = 0.0f;
+    if (secondaryPred.hit)
+        resolution = std::max(resolution, 0.55f + 0.35f * secondaryPred.confidence);
+    if (tritoneSub.hit)
+        resolution = std::max(resolution, 0.5f);
+    if (resolveBias < -0.03f)
+        resolution = std::max(resolution, 0.45f);
+    if (tendency < -0.02f)
+        resolution = std::max(resolution, 0.35f);
+    if (isDominantLike(toQuality))
+        resolution = std::max(resolution, 0.4f);
+    resolution = std::clamp(resolution, 0.0f, 1.0f);
+
+    auto& m = candidate.metrics;
+    m.coherence = coherence;
+    m.tension = tension;
+    m.surprise = surprise;
+    m.voiceLeading = voiceLeading;
+    m.resolution = resolution;
+
+    // Tension direction relative to a neutral mid-band (and current surface if we had prior).
+    constexpr float kMid = 0.38f;
+    if (tension < kMid - 0.08f)
+        m.tensionDirection = CandidateMetrics::TensionDirection::Release;
+    else if (tension > kMid + 0.12f)
+        m.tensionDirection = CandidateMetrics::TensionDirection::Increase;
+    else
+        m.tensionDirection = CandidateMetrics::TensionDirection::Maintain;
+
+    candidate.fitPercent = std::clamp(static_cast<int>(std::round(coherence * 100.0f)), 0, 100);
+    candidate.tensionPercent = std::clamp(2 + static_cast<int>(std::round(tension * 98.0f)), 2, 100);
+    candidate.surprisePercent = std::clamp(static_cast<int>(std::round(surprise * 100.0f)), 0, 100);
+
+    // Drama = desired tension T*. Rank high-coherence candidates near that tension band.
+    const float Tstar = drama01;
+    const float tensionDistance = std::abs(tension - Tstar);
+    candidate.rankingScore =
+        1.15f * coherence
+        - 1.05f * tensionDistance
+        + 0.28f * voiceLeading
+        + 0.22f * resolution
+        - 0.20f * surprise * (1.0f - Tstar)   // punish surprise when user wants smooth
+        + 0.08f * surprise * Tstar;           // slight reward for surprise when wild
+
+    // Reason label: only high-confidence formal claims, then light surface cues.
+    // Never attach "tritone sub" / "secondary V" unless predicates pass.
     std::ostringstream reason;
-    if (candidate.degree)
+    const auto mixturePred = analyseModeMixture(candidate.chord, keyScale);
+    const bool secondaryOk = secondaryPred.hit && secondaryPred.confidence >= kMinLabelConfidence;
+    const bool tritoneOk = tritoneSub.hit; // already confidence-gated in detectTritoneSub
+
+    if (secondaryOk)
+        reason << secondaryPred.label;
+    else if (tritoneOk)
+    {
+        const auto t = analyseTritoneSubstitution(candidate.chord, keyScale);
+        reason << (t.label.empty() ? "subV" : t.label);
+    }
+    else if (mixturePred.hit && mixturePred.confidence >= kMinLabelConfidence)
+        reason << mixturePred.label;
+    else if (candidate.degree)
         reason << getDegreeLabel(*candidate.degree);
     else if (toDegree && toDiatonic)
         reason << getDegreeLabel(*toDegree);
     else if (toDiatonic)
         reason << "diatonic";
-    else if (mixture.hit && mixture.tag)
-        reason << mixture.tag;
-    else if (secondary.hit)
-        reason << "secondary";
-    else if (tritoneSub.hit)
-        reason << "subV";
     else if (approach.tag)
         reason << approach.tag;
     else
@@ -1583,19 +1637,6 @@ void NextChordScorer::score(const Chord& currentChord, const KeyScaleData& keySc
     else if (sus.tag)
         reason << " · " << sus.tag;
 
-    if (secondary.hit && secondary.tag)
-    {
-        reason << " · " << secondary.tag;
-        if (secondary.targetDegree)
-            reason << "/" << getDegreeLabel(*secondary.targetDegree);
-    }
-    if (tritoneSub.hit && tritoneSub.tag && !secondary.hit)
-        reason << " · " << tritoneSub.tag;
-    if (mixture.hit && mixture.tag && !candidate.degree && !toDiatonic)
-    {
-        if (reason.str().find(mixture.tag) == std::string::npos)
-            reason << " · " << mixture.tag;
-    }
     if (mediant.hit && mediant.tag)
         reason << " · " << mediant.tag;
     if (fifthsChain <= -0.03f && grammarTag == nullptr && resolveTag == nullptr
@@ -1610,35 +1651,32 @@ void NextChordScorer::score(const Chord& currentChord, const KeyScaleData& keySc
     else if (bassTo != rootTo && !candidate.chord.notes.empty())
         reason << " · /" << candidate.chord.notes.front().readableNote;
 
-    if (shared > 0)
-        reason << " · " << shared << " common";
-
     if (rootDir == 5)
         reason << " · ↑4th";
     else if (rootDir == 7)
         reason << " · ↑5th";
-    else if (rootMin == 6)
-        reason << " · tritone";
-    else if (rootMin == 1)
-        reason << " · half-step root";
-
-    if (bassMin == 0 && bassFrom != rootFrom)
-        reason << " · pedal bass";
-    else if (bassMin == 1)
-        reason << " · step bass";
-    else if (bassMin == 2)
-        reason << " · skip bass";
-
-    if (rootMin == 0 && sameRootPenalty > 0.0f)
-        reason << " · colour change";
+    // Deliberately omit bare "· tritone" root-distance cue — it was read as "tritone sub".
 
     if (const char* tag = qualityTag(toQuality))
         reason << " · " << tag;
 
-    if (outside > 0)
-        reason << " · " << outside << " outside";
-
     candidate.reasonLabel = reason.str();
+
+    // Hard safety: strip any invalid high-stakes claims (should be no-ops after predicates).
+    if (reasonContainsInvalidTheoryClaim(candidate.reasonLabel, candidate.chord, keyScale))
+    {
+        // Rebuild neutrally without functional claims.
+        std::ostringstream safe;
+        if (candidate.degree)
+            safe << getDegreeLabel(*candidate.degree);
+        else if (toDiatonic)
+            safe << "diatonic";
+        else
+            safe << "chromatic";
+        if (pureInversionChange)
+            safe << " · inversion";
+        candidate.reasonLabel = safe.str();
+    }
 }
 
 void NextChordScorer::scoreAndSort(const Chord& currentChord, const KeyScaleData& keyScale,
@@ -1650,44 +1688,27 @@ void NextChordScorer::scoreAndSort(const Chord& currentChord, const KeyScaleData
     for (auto& candidate : candidates)
         score(currentChord, keyScale, candidate, drama01, sequence);
 
+    // Minimum-coherence gate: wild still requires musical sense.
+    const float minCoh = lerp(kMinCoherenceSmooth, kMinCoherenceWild, drama01);
+    candidates.erase(std::remove_if(candidates.begin(), candidates.end(),
+                         [minCoh](const NextChordCandidate& c) {
+                             return c.metrics.coherence < minCoh;
+                         }),
+                     candidates.end());
+
     if (candidates.empty())
         return;
 
-    // Drama picks a target within the *observed* rankingScore range (not a fixed 0–1), so
-    // drama=0 is always the softest score in this list and drama=1 the wildest — even when
-    // theory pushes rankingScore negative.
-    float minScore = candidates.front().rankingScore;
-    float maxScore = minScore;
-    for (const auto& candidate : candidates)
-    {
-        minScore = std::min(minScore, candidate.rankingScore);
-        maxScore = std::max(maxScore, candidate.rankingScore);
-    }
-    const float targetScore = minScore + (maxScore - minScore) * drama01;
-
+    // Higher rankingScore = better match for the desired tension band (T* = drama01).
     std::stable_sort(candidates.begin(), candidates.end(),
-        [targetScore, drama01](const NextChordCandidate& a, const NextChordCandidate& b)
+        [](const NextChordCandidate& a, const NextChordCandidate& b)
         {
-            const float da = std::abs(a.rankingScore - targetScore);
-            const float db = std::abs(b.rankingScore - targetScore);
-            if (std::abs(da - db) > 1.0e-5f)
-                return da < db;
-
-            // Prefer lower rankingScore when targeting the soft end, higher when wild.
             if (std::abs(a.rankingScore - b.rankingScore) > 1.0e-5f)
-            {
-                if (drama01 <= 0.5f)
-                    return a.rankingScore < b.rankingScore;
                 return a.rankingScore > b.rankingScore;
-            }
-
+            if (a.fitPercent != b.fitPercent)
+                return a.fitPercent > b.fitPercent;
             if (a.tensionPercent != b.tensionPercent)
-            {
-                if (drama01 <= 0.5f)
-                    return a.tensionPercent < b.tensionPercent;
-                return a.tensionPercent > b.tensionPercent;
-            }
-
+                return a.tensionPercent < b.tensionPercent;
             return a.chord.symbol < b.chord.symbol;
         });
 }
