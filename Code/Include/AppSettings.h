@@ -27,6 +27,6 @@ public:
     [[nodiscard]] static juce::File getAppSupportDirectory();
 
 private:
-    juce::InterProcessLock _processLock { "chords-theory-settings" };
+    juce::InterProcessLock _processLock { "chords-theory-enhanced-settings" };
     juce::PropertiesFile _properties;
 };

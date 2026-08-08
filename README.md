@@ -88,9 +88,9 @@ Xcode and Visual Studio project generation is available via the `Xcode`/`vs` pre
 ### Installers
 
 A Release build also packages an installer automatically:
-`release-build/Packaging/Chords Theory-<version>-macOS.pkg` (AU + VST3, ad-hoc signed unless real
+`release-build/Packaging/Chords Theory Enhanced-<version>-macOS.pkg` (AU + VST3, ad-hoc signed unless real
 Developer ID credentials are configured in the environment) on macOS, or
-`release-build\Packaging\Chords Theory-<version>-Windows.exe` (VST3, requires
+`release-build\Packaging\Chords Theory Enhanced-<version>-Windows.exe` (VST3, requires
 [Inno Setup](https://jrsoftware.org/isdl.php)'s `iscc` on `PATH`) on Windows.
 
 ## Testing

@@ -37,7 +37,7 @@ private:
     void loadUserPresets();
     void persistUserPresets();
 
-    juce::InterProcessLock _processLock { "chords-theory-user-presets" };
+    juce::InterProcessLock _processLock { "chords-theory-enhanced-user-presets" };
     juce::PropertiesFile _propertiesFile;
 
     std::vector<ProgressionPreset> _userPresets;
