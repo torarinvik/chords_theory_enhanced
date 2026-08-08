@@ -45,9 +45,9 @@ else ()
     set(DISPLAY_NAME "${PRODUCT_NAME}")
 endif ()
 
-include(${CMAKE_DIR}/cpm.cmake)
+include("${CMAKE_DIR}/cpm.cmake")
 
-cpmaddpackage(
+CPMAddPackage(
         NAME JUCE
         GIT_TAG ${JUCE_VERSION}
         VERSION ${JUCE_VERSION}
@@ -63,7 +63,7 @@ elseif (USE_LOCAL_NIERIKA_DSP AND EXISTS "${LOCAL_NIERIKA_DSP_PATH}/nierika_dsp.
     juce_add_module("${LOCAL_NIERIKA_DSP_PATH}" ALIAS_NAMESPACE nierika)
 else ()
     message(STATUS "nierika_dsp submodule not found; fetching via CPM (may lack Chords Theory APIs)")
-    cpmaddpackage(
+    CPMAddPackage(
             NAME NIERIKA_DSP
             GIT_TAG "v${NIERIKA_DSP_VERSION}"
             VERSION ${NIERIKA_DSP_VERSION}
@@ -74,7 +74,7 @@ else ()
 endif()
 
 # Test-only dependency (Tests/) - not linked into any shipping plugin target.
-cpmaddpackage(
+CPMAddPackage(
         NAME CATCH2
         GITHUB_REPOSITORY catchorg/Catch2
         GIT_TAG v3.7.1
