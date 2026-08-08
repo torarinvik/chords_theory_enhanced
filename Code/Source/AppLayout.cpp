@@ -192,6 +192,7 @@ void AppLayout::onKeyScaleChanged(theory::Key key, theory::Scale scale)
     _chordBrowser.setKeyAndScale(key, scale);
     _nextChordPanel.setKeyAndScale(key, scale);
     _progressionEditor.setScale(scale);
+    refreshNextChordSequenceContext();
 
     syncStateToValueTree();
 }
@@ -238,7 +239,26 @@ void AppLayout::playChordToSynthAndHost(const theory::Chord& chord)
 
 void AppLayout::setCurrentChordForSuggestions(const theory::Chord& chord)
 {
-    _nextChordPanel.setCurrentChord(chord);
+    const auto key = _keyScaleSelector.getKey();
+    const auto scale = _keyScaleSelector.getScale();
+    const auto& keyScale = theory::ChordDatabase::getInstance().get(key, scale);
+    auto sequence = theory::buildSequenceContext(
+        _progressionEditor.getMidiEditorState(), keyScale, &chord);
+
+    _nextChordPanel.setCurrentChord(chord, std::move(sequence));
+}
+
+void AppLayout::refreshNextChordSequenceContext()
+{
+    const auto key = _keyScaleSelector.getKey();
+    const auto scale = _keyScaleSelector.getScale();
+    const auto& keyScale = theory::ChordDatabase::getInstance().get(key, scale);
+    const theory::Chord* current = nullptr;
+    if (const auto& cur = _nextChordPanel.getCurrentChord())
+        current = &*cur;
+
+    _nextChordPanel.setSequenceContext(
+        theory::buildSequenceContext(_progressionEditor.getMidiEditorState(), keyScale, current));
 }
 
 void AppLayout::onVoicingSelectorRequested(theory::Degree degree, const std::vector<theory::Chord>& availableVoicings, const std::string& currentSymbol)
@@ -313,6 +333,7 @@ void AppLayout::onProgressionDragStarted()
 
 void AppLayout::onContentChanged()
 {
+    refreshNextChordSequenceContext();
     syncStateToValueTree();
 }
 
@@ -348,10 +369,12 @@ void AppLayout::restoreStateFromValueTree()
 
     _keyScaleSelector.setKeyAndScale(state.key, state.scale);
     _chordBrowser.setKeyAndScale(state.key, state.scale);
+    _nextChordPanel.setKeyAndScale(state.key, state.scale);
     _progressionEditor.setScale(state.scale);
 
     for (const auto& [degree, chordSymbol] : state.degreeVoicings)
         _chordBrowser.setDegreeVoicing(degree, chordSymbol);
 
     _progressionEditor.restoreMidiEditorState(state.progressionEditorState);
+    refreshNextChordSequenceContext();
 }

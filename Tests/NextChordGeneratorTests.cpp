@@ -4,20 +4,28 @@
 #include <set>
 
 #include "Theory/ChordDatabase.h"
+#include "Theory/MidiEditorState.h"
 #include "Theory/NextChordGenerator.h"
 #include "Theory/NextChordScorer.h"
+#include "Theory/NextChordSequenceContext.h"
 #include "Theory/TriadLibrary.h"
 
 using theory::ChordDatabase;
 using theory::ChordType;
 using theory::Degree;
 using theory::Key;
+using theory::MidiEditorChordBlockState;
+using theory::MidiEditorNoteState;
+using theory::MidiEditorState;
 using theory::NextChordCandidate;
 using theory::NextChordGenerator;
 using theory::NextChordScorer;
 using theory::Scale;
+using theory::SequenceContext;
+using theory::SequenceEvent;
 using theory::TriadLibrary;
 using theory::TriadQuality;
+using theory::buildSequenceContext;
 
 namespace
 {
@@ -31,13 +39,23 @@ namespace
 
     int tensionOf(const theory::Chord& from, const theory::Chord& to, const theory::KeyScaleData& keyScale,
                   std::optional<Degree> degree = std::nullopt,
-                  float drama01 = NextChordScorer::kDefaultDrama)
+                  float drama01 = NextChordScorer::kDefaultDrama,
+                  const SequenceContext& sequence = {})
     {
         NextChordCandidate candidate;
         candidate.chord = to;
         candidate.degree = degree;
-        NextChordScorer::score(from, keyScale, candidate, drama01);
+        NextChordScorer::score(from, keyScale, candidate, drama01, sequence);
         return candidate.tensionPercent;
+    }
+
+    SequenceContext history(std::initializer_list<std::pair<theory::Chord, std::optional<Degree>>> events)
+    {
+        SequenceContext ctx;
+        for (const auto& [chord, degree] : events)
+            ctx.previous.push_back(SequenceEvent { chord, degree });
+        ctx.trim();
+        return ctx;
     }
 
     const NextChordCandidate* findByPcs(const std::vector<NextChordCandidate>& candidates, std::set<int> pcs)
@@ -252,17 +270,225 @@ TEST_CASE("NextChordScorer: minor scale prefers bVII over major's vii habits", "
 {
     const auto& major = ChordDatabase::getInstance().get(Key::C, Scale::Major);
     const auto& minor = ChordDatabase::getInstance().get(Key::A, Scale::Minor);
-    const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C); // C = III in A minor, I in C major
-    const auto bb = TriadLibrary::makeTriad(10, TriadQuality::Major, Key::C); // Bb = bVII of C / bII of A? 
+    const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C);
+    const auto bb = TriadLibrary::makeTriad(10, TriadQuality::Major, Key::C);
 
-    // In C major from C: Bb is chromatic (bVII rock colour).
-    // In A minor from Am: G major is bVII — very common. Use Am as current in minor.
     const auto am = TriadLibrary::makeTriad(9, TriadQuality::Minor, Key::A);
     const auto g = TriadLibrary::makeTriad(7, TriadQuality::Major, Key::A); // bVII in A minor
 
     const int tBbInMajor = tensionOf(c, bb, major);
     const int tGInMinor = tensionOf(am, g, minor, Degree::VII);
 
-    // Minor bVII should sit in a comfortable band (not extreme); major bVII is outside and harsher.
     CHECK(tGInMinor < tBbInMajor);
+}
+
+TEST_CASE("NextChordScorer: progression grammar favours cadences and ii-V", "[NextChord]")
+{
+    const auto& keyScale = ChordDatabase::getInstance().get(Key::C, Scale::Major);
+    const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C);
+    const auto dm = TriadLibrary::makeTriad(2, TriadQuality::Minor, Key::C);
+    const auto em = TriadLibrary::makeTriad(4, TriadQuality::Minor, Key::C);
+    const auto f = TriadLibrary::makeTriad(5, TriadQuality::Major, Key::C);
+    const auto g = TriadLibrary::makeTriad(7, TriadQuality::Major, Key::C);
+    const auto am = TriadLibrary::makeTriad(9, TriadQuality::Minor, Key::C);
+    const auto bdim = TriadLibrary::makeTriad(11, TriadQuality::Diminished, Key::C);
+    const auto g7 = TriadLibrary::makeTriad(7, TriadQuality::Dominant7, Key::C);
+
+    // V → I cadence softer than III → I
+    CHECK(tensionOf(g, c, keyScale, Degree::I) < tensionOf(em, c, keyScale, Degree::I));
+
+    // ii → V softer than ii → iii
+    CHECK(tensionOf(dm, g, keyScale, Degree::V) < tensionOf(dm, em, keyScale, Degree::III));
+
+    // IV → I plagal softer than III → I
+    CHECK(tensionOf(f, c, keyScale, Degree::I) < tensionOf(em, c, keyScale, Degree::I));
+
+    // V7 → I softer than V7 → random remote
+    const auto fs = TriadLibrary::makeTriad(6, TriadQuality::Major, Key::C);
+    CHECK(tensionOf(g7, c, keyScale, Degree::I) < tensionOf(g7, fs, keyScale));
+
+    // Deceptive V → vi still fairly soft (not remote)
+    CHECK(tensionOf(g, am, keyScale, Degree::VI) < tensionOf(g, fs, keyScale));
+
+    // vii° → I approach
+    CHECK(tensionOf(bdim, c, keyScale, Degree::I) < tensionOf(bdim, fs, keyScale));
+}
+
+TEST_CASE("NextChordScorer: quality fitness rewards expected diatonic colour", "[NextChord]")
+{
+    const auto& keyScale = ChordDatabase::getInstance().get(Key::C, Scale::Major);
+    const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C);
+    const auto gMaj = TriadLibrary::makeTriad(7, TriadQuality::Major, Key::C);
+    const auto gMin = TriadLibrary::makeTriad(7, TriadQuality::Minor, Key::C);
+    const auto dm = TriadLibrary::makeTriad(2, TriadQuality::Minor, Key::C);
+    const auto dMaj = TriadLibrary::makeTriad(2, TriadQuality::Major, Key::C);
+
+    // V wants major, not minor
+    CHECK(tensionOf(c, gMaj, keyScale, Degree::V) < tensionOf(c, gMin, keyScale, Degree::V));
+
+    // ii wants minor, not major
+    CHECK(tensionOf(c, dm, keyScale, Degree::II) < tensionOf(c, dMaj, keyScale, Degree::II));
+}
+
+TEST_CASE("NextChordScorer: secondary dominant and tritone sub are idiomatic colour", "[NextChord]")
+{
+    const auto& keyScale = ChordDatabase::getInstance().get(Key::C, Scale::Major);
+    const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C);
+    const auto d7 = TriadLibrary::makeTriad(2, TriadQuality::Dominant7, Key::C);   // V/V
+    const auto a7 = TriadLibrary::makeTriad(9, TriadQuality::Dominant7, Key::C);   // V/ii
+    const auto db7 = TriadLibrary::makeTriad(1, TriadQuality::Dominant7, Key::C);  // subV/I
+    const auto fs = TriadLibrary::makeTriad(6, TriadQuality::Major, Key::C);       // remote
+
+    // Secondary dominants softer than a random remote major
+    CHECK(tensionOf(c, d7, keyScale) < tensionOf(c, fs, keyScale));
+    CHECK(tensionOf(c, a7, keyScale) < tensionOf(c, fs, keyScale));
+
+    // Tritone sub of V is colourful but more idiomatic than F# major
+    CHECK(tensionOf(c, db7, keyScale) < tensionOf(c, fs, keyScale));
+}
+
+TEST_CASE("NextChordScorer: mode mixture bVI/bVII softer than random chromatic", "[NextChord]")
+{
+    const auto& keyScale = ChordDatabase::getInstance().get(Key::C, Scale::Major);
+    const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C);
+    const auto ab = TriadLibrary::makeTriad(8, TriadQuality::Major, Key::C);  // bVI
+    const auto bb = TriadLibrary::makeTriad(10, TriadQuality::Major, Key::C); // bVII
+    const auto fs = TriadLibrary::makeTriad(6, TriadQuality::Major, Key::C);
+
+    CHECK(tensionOf(c, ab, keyScale) < tensionOf(c, fs, keyScale));
+    CHECK(tensionOf(c, bb, keyScale) < tensionOf(c, fs, keyScale));
+}
+
+TEST_CASE("NextChordScorer: directed root interval and degree helpers", "[NextChord]")
+{
+    CHECK(NextChordScorer::directedRootInterval(0, 7) == 7);  // C→G up 5th
+    CHECK(NextChordScorer::directedRootInterval(7, 0) == 5);  // G→C up 4th
+    CHECK(NextChordScorer::directedRootInterval(0, 0) == 0);
+
+    const auto& keyScale = ChordDatabase::getInstance().get(Key::C, Scale::Major);
+    CHECK(NextChordScorer::keyTonicPitchClass(keyScale) == 0);
+    CHECK(NextChordScorer::degreeOfRoot(0, keyScale) == Degree::I);
+    CHECK(NextChordScorer::degreeOfRoot(7, keyScale) == Degree::V);
+    CHECK(NextChordScorer::degreeOfRoot(9, keyScale) == Degree::VI);
+    CHECK_FALSE(NextChordScorer::degreeOfRoot(1, keyScale).has_value()); // Db not diatonic
+
+    CHECK(NextChordScorer::roleFor(Degree::I, TriadQuality::Major, NextChordScorer::ScaleFamily::Majorish)
+          == NextChordScorer::HarmonicRole::Tonic);
+    CHECK(NextChordScorer::roleFor(Degree::V, TriadQuality::Dominant7, NextChordScorer::ScaleFamily::Majorish)
+          == NextChordScorer::HarmonicRole::Dominant);
+    CHECK(NextChordScorer::roleFor(Degree::II, TriadQuality::Minor, NextChordScorer::ScaleFamily::Majorish)
+          == NextChordScorer::HarmonicRole::Predominant);
+}
+
+TEST_CASE("NextChordScorer: dominant wants its resolution target", "[NextChord]")
+{
+    const auto& keyScale = ChordDatabase::getInstance().get(Key::C, Scale::Major);
+    const auto g7 = TriadLibrary::makeTriad(7, TriadQuality::Dominant7, Key::C);
+    const auto d7 = TriadLibrary::makeTriad(2, TriadQuality::Dominant7, Key::C); // V/V
+    const auto db7 = TriadLibrary::makeTriad(1, TriadQuality::Dominant7, Key::C); // subV
+    const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C);
+    const auto g = TriadLibrary::makeTriad(7, TriadQuality::Major, Key::C);
+    const auto dm = TriadLibrary::makeTriad(2, TriadQuality::Minor, Key::C);
+    const auto fs = TriadLibrary::makeTriad(6, TriadQuality::Major, Key::C);
+
+    // G7 → C much softer than G7 → F#
+    CHECK(tensionOf(g7, c, keyScale, Degree::I) < tensionOf(g7, fs, keyScale));
+
+    // Secondary D7 prefers G over a remote chord
+    CHECK(tensionOf(d7, g, keyScale, Degree::V) < tensionOf(d7, fs, keyScale));
+
+    // Tritone sub Db7 → C softer than Db7 → F#
+    CHECK(tensionOf(db7, c, keyScale, Degree::I) < tensionOf(db7, fs, keyScale));
+
+    // Abandoning a dominant (G7 → Dm) is tenser than resolving (G7 → C)
+    CHECK(tensionOf(g7, c, keyScale, Degree::I) < tensionOf(g7, dm, keyScale, Degree::II));
+}
+
+TEST_CASE("NextChordScorer: backdoor, sus resolve, blues I7, secondary weights", "[NextChord]")
+{
+    const auto& keyScale = ChordDatabase::getInstance().get(Key::C, Scale::Major);
+    const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C);
+    const auto bb = TriadLibrary::makeTriad(10, TriadQuality::Major, Key::C); // bVII
+    const auto fm = TriadLibrary::makeTriad(5, TriadQuality::Minor, Key::C);  // iv
+    const auto gsus = TriadLibrary::makeTriad(7, TriadQuality::Sus4, Key::C);
+    const auto g = TriadLibrary::makeTriad(7, TriadQuality::Major, Key::C);
+    const auto c7 = TriadLibrary::makeTriad(0, TriadQuality::Dominant7, Key::C); // I7 blues
+    const auto cs = TriadLibrary::makeTriad(1, TriadQuality::Major, Key::C);     // random-ish
+    const auto d7 = TriadLibrary::makeTriad(2, TriadQuality::Dominant7, Key::C); // V/V
+    const auto b7 = TriadLibrary::makeTriad(11, TriadQuality::Dominant7, Key::C); // V/iii
+    const auto fs = TriadLibrary::makeTriad(6, TriadQuality::Major, Key::C);
+
+    // Backdoor bVII → I softer than remote approach to I
+    CHECK(tensionOf(bb, c, keyScale, Degree::I) < tensionOf(fs, c, keyScale, Degree::I));
+
+    // Minor plagal iv → I softer than remote → I
+    CHECK(tensionOf(fm, c, keyScale, Degree::I) < tensionOf(fs, c, keyScale, Degree::I));
+
+    // Sus resolve same root
+    CHECK(tensionOf(gsus, g, keyScale, Degree::V) < tensionOf(gsus, fs, keyScale));
+
+    // Blues I7 from V is not wilder than a random chromatic major from V
+    CHECK(tensionOf(g, c7, keyScale, Degree::I) < tensionOf(g, cs, keyScale));
+
+    // V/V more idiomatic than V/iii as a next chord from I
+    CHECK(tensionOf(c, d7, keyScale) < tensionOf(c, b7, keyScale));
+}
+
+TEST_CASE("NextChordScorer: sequence context completes ii-V-I and continues fifths", "[NextChord]")
+{
+    const auto& keyScale = ChordDatabase::getInstance().get(Key::C, Scale::Major);
+    const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C);
+    const auto dm = TriadLibrary::makeTriad(2, TriadQuality::Minor, Key::C);
+    const auto g = TriadLibrary::makeTriad(7, TriadQuality::Major, Key::C);
+    const auto em = TriadLibrary::makeTriad(4, TriadQuality::Minor, Key::C);
+    const auto am = TriadLibrary::makeTriad(9, TriadQuality::Minor, Key::C);
+
+    // After Dm → G, C (I) is softer than Em as the next move.
+    const auto afterIiV = history({ { dm, Degree::II } });
+    CHECK(tensionOf(g, c, keyScale, Degree::I, NextChordScorer::kDefaultDrama, afterIiV)
+          < tensionOf(g, em, keyScale, Degree::III, NextChordScorer::kDefaultDrama, afterIiV));
+
+    // Falling-fifths chain: Am → Dm (already +5) then G continues the chain better than Em.
+    const auto afterAm = history({ { am, Degree::VI } });
+    CHECK(tensionOf(dm, g, keyScale, Degree::V, NextChordScorer::kDefaultDrama, afterAm)
+          < tensionOf(dm, em, keyScale, Degree::III, NextChordScorer::kDefaultDrama, afterAm));
+
+    // Exact repeat of a recent chord is penalised vs a fresh diatonic move.
+    const auto afterC = history({ { c, Degree::I } });
+    // Current Am, history C: going back to C soon is tenser than going to F would be... use Dm.
+    CHECK(tensionOf(am, c, keyScale, Degree::I, NextChordScorer::kDefaultDrama, afterC)
+          > tensionOf(am, dm, keyScale, Degree::II, NextChordScorer::kDefaultDrama, afterC) - 5);
+}
+
+TEST_CASE("buildSequenceContext: reconstructs ordered history and drops matching current", "[NextChord]")
+{
+    const auto& keyScale = ChordDatabase::getInstance().get(Key::C, Scale::Major);
+    const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C);
+    const auto g = TriadLibrary::makeTriad(7, TriadQuality::Major, Key::C);
+
+    MidiEditorState state;
+    // Block 0: C major at beat 0 (MIDI C3 E3 G3 roughly)
+    state.chordBlocks.push_back(MidiEditorChordBlockState {
+        0, "C", 0.0, 4.0, { Degree::I, 1 }
+    });
+    state.notes.push_back(MidiEditorNoteState { 60, 0.0, 4.0, 0 });
+    state.notes.push_back(MidiEditorNoteState { 64, 0.0, 4.0, 0 });
+    state.notes.push_back(MidiEditorNoteState { 67, 0.0, 4.0, 0 });
+    // Block 1: G major at beat 4
+    state.chordBlocks.push_back(MidiEditorChordBlockState {
+        1, "G", 4.0, 4.0, { Degree::V, 1 }
+    });
+    state.notes.push_back(MidiEditorNoteState { 67, 4.0, 4.0, 1 });
+    state.notes.push_back(MidiEditorNoteState { 71, 4.0, 4.0, 1 });
+    state.notes.push_back(MidiEditorNoteState { 74, 4.0, 4.0, 1 });
+
+    auto full = buildSequenceContext(state, keyScale, nullptr);
+    REQUIRE(full.size() == 2);
+    CHECK(pitchClasses(full.previous[0].chord) == pitchClasses(c));
+    CHECK(pitchClasses(full.previous[1].chord) == pitchClasses(g));
+
+    // When current is G, drop the last block from previous.
+    auto beforeG = buildSequenceContext(state, keyScale, &g);
+    REQUIRE(beforeG.size() == 1);
+    CHECK(pitchClasses(beforeG.previous[0].chord) == pitchClasses(c));
 }

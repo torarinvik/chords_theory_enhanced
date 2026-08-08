@@ -60,8 +60,11 @@ private:
     // Auditions on the internal synth and emits host MIDI for DAW routing.
     void playChordToSynthAndHost(const theory::Chord& chord);
 
-    // Updates the next-triad panel from a newly chosen "current" chord.
+    // Updates the next-chord panel from a newly chosen "current" chord (and rebuilds sequence memory).
     void setCurrentChordForSuggestions(const theory::Chord& chord);
+
+    // Rebuilds phrase-memory from the progression sequencer without changing the current chord.
+    void refreshNextChordSequenceContext();
 
     // Re-derives the voicing selector's arrow-target x from the currently open degree's card -
     // called after the layout changes for any reason (new degree opened, or a resize while

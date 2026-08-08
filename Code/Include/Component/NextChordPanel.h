@@ -10,6 +10,7 @@
 #include "Theory/Chord.h"
 #include "Theory/Key.h"
 #include "Theory/NextChordCandidate.h"
+#include "Theory/NextChordSequenceContext.h"
 #include "Theory/Scale.h"
 
 namespace component
@@ -37,10 +38,15 @@ public:
 
     void setKeyAndScale(theory::Key key, theory::Scale scale);
     void setCurrentChord(const theory::Chord& chord);
+    // Progression chords before the current one (phrase memory for ranking). Empty clears context.
+    void setSequenceContext(theory::SequenceContext sequence);
+    // Atomically update current chord + sequence memory (one regenerate).
+    void setCurrentChord(const theory::Chord& chord, theory::SequenceContext sequence);
     void clear();
 
     void setDrama01(float drama01);
     [[nodiscard]] float getDrama01() const { return _drama01; }
+    [[nodiscard]] const theory::SequenceContext& getSequenceContext() const { return _sequence; }
 
     void setOnCandidateChosen(OnCandidateChosen callback) { _onCandidateChosen = std::move(callback); }
     void setOnCandidatePreview(OnCandidatePreview callback) { _onCandidatePreview = std::move(callback); }
@@ -97,6 +103,7 @@ private:
     theory::Key _key = theory::Key::C;
     theory::Scale _scale = theory::Scale::Major;
     std::optional<theory::Chord> _currentChord;
+    theory::SequenceContext _sequence;
     std::vector<theory::NextChordCandidate> _candidates;
     float _drama01 = 0.35f;
 

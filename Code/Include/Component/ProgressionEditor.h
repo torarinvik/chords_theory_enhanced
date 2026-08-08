@@ -70,6 +70,9 @@ public:
     // rather than shifting later slots to fill the gap.
     void loadPreset(const theory::ProgressionPreset& preset);
 
+    // Removes every chord/note from the sequencer (user "reset" control). Fires onContentChanged.
+    void clearAll();
+
     // The MidiEditor's chord blocks, sorted by startBeat, each reporting the ProgressionSlot it was
     // dropped/loaded with (frozen at that time - see MidiEditor.h) - used for "save as preset" and
     // was previously also used for the drag-handle export (now reads getMidiEditorState() instead,
@@ -105,6 +108,7 @@ private:
     ProgressionPresetPicker _presetPicker;
     nelement::SVGButton _savePresetButton;
     nelement::SVGButton _playButton { "progression-play-button", nui::Icons::getPlay() };
+    nelement::SVGButton _clearButton { "progression-clear-button", nui::Icons::getCross() };
 
     ProgressionDragHandle _dragHandle;
     MidiEditor _midiEditor;

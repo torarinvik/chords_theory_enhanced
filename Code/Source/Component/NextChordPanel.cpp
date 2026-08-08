@@ -228,6 +228,21 @@ void NextChordPanel::setCurrentChord(const theory::Chord& chord)
     regenerate();
 }
 
+void NextChordPanel::setSequenceContext(theory::SequenceContext sequence)
+{
+    sequence.trim();
+    _sequence = std::move(sequence);
+    regenerate();
+}
+
+void NextChordPanel::setCurrentChord(const theory::Chord& chord, theory::SequenceContext sequence)
+{
+    sequence.trim();
+    _sequence = std::move(sequence);
+    _currentChord = chord;
+    regenerate();
+}
+
 void NextChordPanel::setDrama01(float drama01)
 {
     drama01 = juce::jlimit(0.0f, 1.0f, drama01);
@@ -264,6 +279,7 @@ void NextChordPanel::syncDramaLabels()
 void NextChordPanel::clear()
 {
     _currentChord.reset();
+    _sequence = {};
     _candidates.clear();
     _currentLabel.setText("");
     rebuildList();
@@ -282,10 +298,14 @@ void NextChordPanel::regenerate()
         return;
     }
 
-    _currentLabel.setText((juce::translate("next_chord_current_prefix") + " " + _currentChord->readableName).toStdString());
+    juce::String currentText = juce::translate("next_chord_current_prefix") + " " + _currentChord->readableName;
+    if (!_sequence.empty())
+        currentText += "  ·  " + juce::translate("next_chord_history_suffix")
+            .replace("%n", juce::String(_sequence.size()));
+    _currentLabel.setText(currentText.toStdString());
 
     const auto& keyScale = theory::ChordDatabase::getInstance().get(_key, _scale);
-    _candidates = theory::NextChordGenerator::generate(*_currentChord, keyScale, _drama01);
+    _candidates = theory::NextChordGenerator::generate(*_currentChord, keyScale, _drama01, _sequence);
 
     rebuildList();
     _viewport.setViewPosition(0, 0);

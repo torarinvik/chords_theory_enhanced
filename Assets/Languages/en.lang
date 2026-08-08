@@ -23,6 +23,8 @@ countries: us gb au ca nz ie
 "progression_save_preset_confirm" = "Save"
 "progression_save_preset_placeholder" = "Preset name"
 "progression_presets_label" = "Progression presets"
+"progression_clear_tooltip" = "Clear all chords from the sequence"
+"next_chord_history_suffix" = "(%n in sequence)"
 "progression_preset_picker_placeholder" = "Select a preset"
 "progression_preset_pop_i_v_vi_iv" = "I - V - vi - IV (Pop)"
 "progression_preset_fifty" = "I - vi - IV - V (50s)"

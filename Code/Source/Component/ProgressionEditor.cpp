@@ -30,6 +30,10 @@ ProgressionEditor::ProgressionEditor(const std::string& identifier, ChordResolve
     _playButton.setIconSize(16.f);
     _playButton.addOnClickListener(this);
 
+    _clearButton.setIconSize(14.f);
+    _clearButton.addOnClickListener(this);
+    _clearButton.setHelpText(juce::translate("progression_clear_tooltip").toStdString());
+
     _dragHandle.addListener(this);
 
     _presetsLabel.setText(juce::translate("progression_presets_label").toStdString());
@@ -41,24 +45,27 @@ ProgressionEditor::ProgressionEditor(const std::string& identifier, ChordResolve
     _layout.setGap(8.f);
     _layout.setDisplayGrid(false);
 
-    _layout.init({ 1, 1, 1 }, { 1, 1, 1, 4, 1, 1, 1 });
+    // play | clear | gap | drag | flex | presets label | picker | save
+    _layout.init({ 1, 1, 1 }, { 1, 1, 1, 1, 3, 1, 1, 1 });
 
     _layout.setFixedColumnWidth(0, 32.f);
-    _layout.setFixedColumnWidth(1, 12.f);
-    _layout.setFixedColumnWidth(2, 150.f);
-    _layout.setFixedColumnWidth(6, 32.f);
-    _layout.setFixedColumnWidth(5, 250.f);
-    _layout.setFixedColumnWidth(4, 175.f);
+    _layout.setFixedColumnWidth(1, 32.f);
+    _layout.setFixedColumnWidth(2, 12.f);
+    _layout.setFixedColumnWidth(3, 150.f);
+    _layout.setFixedColumnWidth(5, 175.f);
+    _layout.setFixedColumnWidth(6, 250.f);
+    _layout.setFixedColumnWidth(7, 32.f);
 
     _layout.setFixedRowHeight(0, kHeaderRowHeight);
     _layout.setFixedRowHeight(1, 12.f);
 
     _layout.addComponent(_playButton, 0, 0, 1, 1);
-    _layout.addComponent(_dragHandle, 0, 2, 1, 1);
-    _layout.addComponent(_presetsLabel, 0, 4, 1, 1);
-    _layout.addComponent(_presetPicker, 0, 5, 1, 1);
-    _layout.addComponent(_savePresetButton, 0, 6, 1, 1);
-    _layout.addComponent(_midiEditor, 2, 0, 7, 1);
+    _layout.addComponent(_clearButton, 0, 1, 1, 1);
+    _layout.addComponent(_dragHandle, 0, 3, 1, 1);
+    _layout.addComponent(_presetsLabel, 0, 5, 1, 1);
+    _layout.addComponent(_presetPicker, 0, 6, 1, 1);
+    _layout.addComponent(_savePresetButton, 0, 7, 1, 1);
+    _layout.addComponent(_midiEditor, 2, 0, 8, 1);
 }
 
 ProgressionEditor::~ProgressionEditor()
@@ -66,6 +73,7 @@ ProgressionEditor::~ProgressionEditor()
     _presetPicker.removeListener(this);
     _savePresetButton.removeListener(this);
     _playButton.removeListener(this);
+    _clearButton.removeListener(this);
     _dragHandle.removeListener(this);
     _midiEditor.removeListener(this);
 }
@@ -100,6 +108,14 @@ void ProgressionEditor::loadPreset(const theory::ProgressionPreset& preset)
         if (const auto* chord = _chordResolver ? _chordResolver(slot) : nullptr)
             _midiEditor.addChordAtBeat(static_cast<double>(i) * MidiEditor::kBeatsPerBar, *chord, slot);
     }
+}
+
+void ProgressionEditor::clearAll()
+{
+    _midiEditor.clear();
+    // clear() stops playback but does not fire content-changed (restore/load paths own that).
+    // User reset must still persist empty session state and refresh next-chord history.
+    onContentChanged();
 }
 
 std::vector<theory::ProgressionSlot> ProgressionEditor::getPopulatedSlots() const
@@ -185,6 +201,12 @@ void ProgressionEditor::onButtonClick(const std::string& componentID)
             _midiEditor.stopPlayback();
         else
             _midiEditor.startPlayback();
+        return;
+    }
+
+    if (componentID == _clearButton.getComponentID())
+    {
+        clearAll();
         return;
     }
 

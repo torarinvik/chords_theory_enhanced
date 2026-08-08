@@ -39,7 +39,7 @@ namespace
 }
 
 std::vector<NextChordCandidate> NextChordGenerator::generate(const Chord& currentChord, const KeyScaleData& keyScale,
-                                                             float drama01)
+                                                             float drama01, const SequenceContext& sequence)
 {
     if (currentChord.notes.empty())
         return {};
@@ -65,7 +65,7 @@ std::vector<NextChordCandidate> NextChordGenerator::generate(const Chord& curren
         candidates.push_back(std::move(candidate));
     }
 
-    NextChordScorer::scoreAndSort(currentChord, keyScale, candidates, drama01);
+    NextChordScorer::scoreAndSort(currentChord, keyScale, candidates, drama01, sequence);
     return candidates;
 }
 
