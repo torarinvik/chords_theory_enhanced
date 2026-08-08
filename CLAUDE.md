@@ -4,12 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-**Chords Theory** is a JUCE MIDI-effect plugin (Standalone / AU / AUv3 / VST3) that helps a user
-browse the diatonic chords of a key/scale and drag them straight into a DAW as MIDI. Built on
+**Chords Theory Enhanced** is a **community fork** of
+[halbehers/chords_theory](https://github.com/halbehers/chords_theory) (Sebastien Halbeher /
+Nierika). Upstream is a JUCE plugin (Standalone / AU / AUv3 / VST3) that helps a user browse the
+diatonic chords of a key/scale and drag them straight into a DAW as MIDI. Built on
 [Nierika Plugin Template](https://github.com/halbehers/nierika_plugin_template) — the CI/build/
 test/packaging infrastructure, i18n mechanism, and themed `AppLayout`/`SettingsWindow` shell are
-inherited from there unchanged; everything under `Code/Include/Theory` and the chord/progression
-components under `Code/Include/Component` are this plugin's own domain logic on top of it.
+inherited from there. This fork adds next-triad ranking, host MIDI out, and related Theory/
+Component pieces under `Code/`. See `LICENSE` (upstream MIT + fork CC0) and `CONTRIBUTING.md`
+(AI pull requests welcome).
 
 ## Build / Tests
 
@@ -117,3 +120,10 @@ for the CMake identity variables, `AppSettings.h`'s `InterProcessLock` id,
 `ProgressionPresetLibrary`'s lock id, packaging assets, and this file. The `Theory`/`Component`
 layers described above are this plugin's actual product — they'd need to be replaced, not renamed,
 for an unrelated plugin.
+
+## Fork relationship
+
+- Upstream: https://github.com/halbehers/chords_theory
+- This repo: https://github.com/torarinvik/chords_theory_enhanced
+- Do not present this tree as the sole official Nierika product; credit upstream in user-facing
+  docs and PR descriptions when relevant.

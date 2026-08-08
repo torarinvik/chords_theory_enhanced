@@ -1,0 +1,93 @@
+Copyright and License
+=====================
+
+This repository (**chords_theory_enhanced**) is a fork of
+[halbehers/chords_theory](https://github.com/halbehers/chords_theory) by
+**Sebastien Halbeher** (Nierika, [@halbehers](https://github.com/halbehers)).
+
+
+1. Original work (upstream)
+---------------------------
+
+Copyright (c) Sebastien Halbeher (Nierika / @halbehers)
+
+The original Chords Theory plugin, its packaging shell, and related material
+inherited from the upstream project and the Nierika plugin stack remain the
+copyright of the original author.
+
+That original material is licensed under the **MIT License** (full text in
+section 3 below), consistent with the Nierika / `nierika_dsp` ecosystem.
+
+Nothing in this fork transfers, waives, or re-licenses the original author's
+copyright. Redistribution of upstream code must retain the original copyright
+notice and MIT permission notice.
+
+
+2. Fork additions (public domain / CC0)
+---------------------------------------
+
+To the extent possible under law, the maintainers and contributors of
+**chords_theory_enhanced** dedicate their **original contributions** to this
+fork to the public domain under **CC0 1.0 Universal**.
+
+This includes (non-exhaustively) work unique to this fork such as next-chord
+ranking and the triad library, host MIDI output (`HostMidiEmitter`), related
+UI, tests, and documentation written for the fork.
+
+This dedication **does not** apply to:
+
+- upstream Chords Theory / Nierika code and assets;
+- third-party dependencies (JUCE, Catch2, `nierika_dsp`, etc.), which keep
+  their own licenses.
+
+CC0 1.0 summary: you may copy, modify, distribute, and use those fork
+contributions, even commercially, without asking permission. See the full
+legal text: https://creativecommons.org/publicdomain/zero/1.0/legalcode
+
+### CC0 1.0 Universal (Deed-style notice)
+
+The person who associated a work with this deed has dedicated the work to the
+public domain by waiving all of their rights to the work worldwide under
+copyright law, including all related and neighboring rights, to the extent
+allowed by law.
+
+You can copy, modify, distribute and perform the work, even for commercial
+purposes, all without asking permission.
+
+
+3. MIT License (original / shared base)
+---------------------------------------
+
+MIT License
+
+Copyright (c) Sebastien Halbeher (Nierika)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+4. Third-party components
+-------------------------
+
+This project links against or bundles other software with their own licenses,
+including but not limited to:
+
+- JUCE (https://juce.com) — see JUCE license terms
+- Catch2 — Boost Software License
+- nierika_dsp submodule — MIT (Sebastien Halbeher), with fork extensions as
+  documented in that repository
