@@ -15,6 +15,7 @@
 #include <string>
 
 #include "Audio/ChordSynthEngine.h"
+#include "Audio/HostMidiEmitter.h"
 
 using BlockType = juce::AudioBuffer<float>;
 
@@ -43,6 +44,7 @@ public:
     bool hasEditor() const override;
 
     audio::ChordSynthEngine& getSynthEngine() { return _synthEngine; }
+    audio::HostMidiEmitter& getHostMidiEmitter() { return _hostMidiEmitter; }
 
     //==============================================================================
     const juce::String getName() const override;
@@ -74,6 +76,7 @@ private:
     juce::AudioProcessorValueTreeState::ParameterLayout getParameterLayout();
 
     audio::ChordSynthEngine _synthEngine;
+    audio::HostMidiEmitter _hostMidiEmitter;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginAudioProcessor)
 };

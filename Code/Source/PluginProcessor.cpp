@@ -136,11 +136,13 @@ void PluginAudioProcessor::changeProgramName(int index, const juce::String& newN
 void PluginAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     _synthEngine.prepare(sampleRate, samplesPerBlock, getTotalNumOutputChannels());
+    _hostMidiEmitter.prepare(sampleRate);
 }
 
 void PluginAudioProcessor::releaseResources()
 {
     _synthEngine.reset();
+    _hostMidiEmitter.allNotesOff();
 
     nutils::Logger::markShuttingDown();
 }
@@ -175,7 +177,10 @@ void PluginAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     juce::ScopedNoDenormals noDenormals;
 
     buffer.clear();
+    // Internal synth (preview + progression) first — may consume/transform midiMessages.
     _synthEngine.renderNextBlock(buffer, midiMessages, 0, buffer.getNumSamples(), getPlayHead());
+    // Host-routable MIDI out last so DAWs receive note events for other tracks.
+    _hostMidiEmitter.renderNextBlock(midiMessages, buffer.getNumSamples());
 }
 
 //==============================================================================

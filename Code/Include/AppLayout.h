@@ -8,11 +8,14 @@
 #include "PluginProcessor.h"
 #include "Component/ChordDegreeBrowser.h"
 #include "Component/KeyScaleSelector.h"
+#include "Component/NextChordPanel.h"
 #include "Component/ProgressionEditor.h"
 #include "Component/SettingsWindow.h"
 #include "Component/SynthEditor.h"
 #include "Component/VoicingSelector.h"
+#include "Theory/Chord.h"
 #include "Theory/Degree.h"
+#include "Theory/ProgressionSlot.h"
 
 class AppLayout final : public nlayout::AppLayout,
                          public nelement::SVGButton::OnClickListener,
@@ -54,6 +57,12 @@ private:
     // Shared by both onChordPreviewRequested overrides above.
     void previewChord(const theory::Chord& chord);
 
+    // Auditions on the internal synth and emits host MIDI for DAW routing.
+    void playChordToSynthAndHost(const theory::Chord& chord);
+
+    // Updates the next-triad panel from a newly chosen "current" chord.
+    void setCurrentChordForSuggestions(const theory::Chord& chord);
+
     // Re-derives the voicing selector's arrow-target x from the currently open degree's card -
     // called after the layout changes for any reason (new degree opened, or a resize while
     // already open). No-op while the selector is closed.
@@ -76,6 +85,7 @@ private:
     nelement::SVGButton _settings;
     component::KeyScaleSelector _keyScaleSelector;
     component::ChordDegreeBrowser _chordBrowser;
+    component::NextChordPanel _nextChordPanel { "next-chord-panel" };
     component::VoicingSelector _voicingSelector { "voicing-selector" };
     component::ProgressionEditor _progressionEditor;
     component::SynthEditor _synthEditor;
@@ -88,10 +98,18 @@ private:
 
     nlayout::WindowsManager _windowsManager;
 
-    // tempFilePath -> degree, populated in onChordDragStarted() just before starting the OS-level
-    // file drag, consulted by onChordFileDropped() when that same file lands on the MidiEditor
-    // inside this same window - see MidiExporter/MidiEditor for the rest of the mechanism.
-    std::unordered_map<juce::String, theory::Degree> _inFlightChordDrags;
+    // Carries the exact Chord (and a ProgressionSlot for lane/preset metadata) across an OS-level
+    // file drag so MidiEditor drops don't need to re-resolve against the browser — required for
+    // chromatic next-triad suggestions that have no degree in the current key/scale.
+    struct InFlightChordDrag
+    {
+        theory::Chord chord;
+        theory::ProgressionSlot sourceSlot;
+    };
+
+    // tempFilePath -> chord payload, populated just before performExternalDragDropOfFiles,
+    // consulted by onChordFileDropped() for internal sequencer drops.
+    std::unordered_map<juce::String, InFlightChordDrag> _inFlightChordDrags;
 
     // Which degree the voicing selector is currently showing, if open - used to re-derive the
     // arrow-target x on resize and to know what to clear when the key/scale changes underneath it.

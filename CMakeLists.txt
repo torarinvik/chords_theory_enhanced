@@ -102,7 +102,8 @@ juce_add_plugin(
         IS_SYNTH TRUE
         IS_MIDI_EFFECT FALSE
         NEEDS_MIDI_INPUT TRUE
-        NEEDS_MIDI_OUTPUT FALSE
+        # Host MIDI out so DAWs (e.g. Reaper) can route chosen chords to another instrument track.
+        NEEDS_MIDI_OUTPUT TRUE
 )
 
 file(GLOB_RECURSE SourceFiles CONFIGURE_DEPENDS "${SOURCE_DIR}/*.cpp")

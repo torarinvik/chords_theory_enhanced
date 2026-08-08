@@ -8,10 +8,10 @@ namespace component
 VoicingSelector::VoicingSelector(const std::string& identifier):
     Component(identifier)
 {
-    // addAndMakeVisible(_closeButton);
-    // _closeButton.addOnClickListener(this);
-    // _closeButton.setIconSize(12.f);
-    // _closeButton.toFront(false); // defensive z-order parity with SettingsWindow's close button
+    addAndMakeVisible(_closeButton);
+    _closeButton.addOnClickListener(this);
+    _closeButton.setIconSize(12.f);
+    _closeButton.toFront(false); // defensive z-order parity with SettingsWindow's close button
 
     addAndMakeVisible(_viewport);
     _viewport.setViewedComponent(&_voicingRow, false); // false: _voicingRow is an owned member, not viewport-owned
@@ -38,7 +38,7 @@ VoicingSelector::~VoicingSelector()
 {
     juce::Desktop::getInstance().removeGlobalMouseListener(this);
 
-    // _closeButton.removeListener(this);
+    _closeButton.removeListener(this);
 
     for (auto& button : _buttons)
         button->removeListener(this);
@@ -69,8 +69,8 @@ void VoicingSelector::resized()
     const auto bodyBounds = getLocalBounds().withTrimmedTop(kTriangleHeight);
     auto contentBounds = bodyBounds.reduced(kBodyInset);
 
-    // const auto closeButtonArea = contentBounds.removeFromRight(kCloseButtonSize).removeFromTop(kCloseButtonSize);
-    // _closeButton.setBounds(closeButtonArea);
+    const auto closeButtonArea = contentBounds.removeFromRight(kCloseButtonSize).removeFromTop(kCloseButtonSize);
+    _closeButton.setBounds(closeButtonArea);
 
     _viewport.setBounds(contentBounds.withTrimmedRight(kBodyInset));
 

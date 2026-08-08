@@ -26,6 +26,31 @@ AppLayout::AppLayout(ndsp::ParameterManager& parameterManager, PluginAudioProces
     _chordBrowser.addListener(this);
     _chordBrowser.setKeyAndScale(_keyScaleSelector.getKey(), _keyScaleSelector.getScale());
 
+    _nextChordPanel.setKeyAndScale(_keyScaleSelector.getKey(), _keyScaleSelector.getScale());
+    _nextChordPanel.setOnCandidateChosen([this](const theory::NextChordCandidate& candidate)
+    {
+        // Clicking the row body makes it the new "current" chord and re-ranks from there.
+        setCurrentChordForSuggestions(candidate.chord);
+        playChordToSynthAndHost(candidate.chord);
+    });
+    _nextChordPanel.setOnCandidatePreview([this](const theory::NextChordCandidate& candidate)
+    {
+        // Play button: audition only — does not change the current-chord context.
+        playChordToSynthAndHost(candidate.chord);
+    });
+    _nextChordPanel.setOnCandidateDragStarted([this](const theory::NextChordCandidate& candidate)
+    {
+        const auto midiFile = theory::MidiExporter::writeSingleChordMidiFile(candidate.chord);
+        const theory::ProgressionSlot sourceSlot {
+            candidate.degree.value_or(theory::Degree::I),
+            candidate.chord.popularityOrder
+        };
+        _inFlightChordDrags[midiFile.getFullPathName()] = InFlightChordDrag { candidate.chord, sourceSlot };
+
+        if (auto* dragContainer = findParentComponentOfClass<juce::DragAndDropContainer>())
+            dragContainer->performExternalDragDropOfFiles({ midiFile.getFullPathName() }, false);
+    });
+
     _progressionEditor.addListener(this);
     _progressionEditor.setScale(_keyScaleSelector.getScale());
 
@@ -48,7 +73,8 @@ AppLayout::AppLayout(ndsp::ParameterManager& parameterManager, PluginAudioProces
     _mainSection.addPanel("synth-tab", juce::translate("synth_tab_label").toStdString());
 
     _mainSection.getLayout().setDisplayGrid(false);
-    _mainSection.getLayout().init({ 1, 1, 1, 1, 1 }, { 1, 1, 1, 1, 1, 1, 1, 1, 1 });
+    // rows: settings, browser, voicing, next-triads, spacer, progression
+    _mainSection.getLayout().init({ 1, 1, 1, 1, 1, 1 }, { 1, 1, 1, 1, 1, 1, 1, 1, 1 });
 
     _mainSection.getLayout().setFixedColumnWidth(0, 24.f);
     _mainSection.getLayout().setFixedColumnWidth(8, 24.f);
@@ -58,13 +84,15 @@ AppLayout::AppLayout(ndsp::ParameterManager& parameterManager, PluginAudioProces
     _mainSection.getLayout().setFixedRowHeight(0, 60.f);
     _mainSection.getLayout().setFixedRowHeight(1, 64.f);
     _mainSection.getLayout().setFixedRowHeight(2, 70.f);
-    _mainSection.getLayout().setFixedRowHeight(3, 12.f);
+    _mainSection.getLayout().setFixedRowHeight(3, 160.f); // next-triad ranking panel
+    _mainSection.getLayout().setFixedRowHeight(4, 12.f);
 
     _mainSection.getLayout().addComponent(_settings, 0, 1, 1, 1);
     _mainSection.getLayout().addComponent(_keyScaleSelector, 0, 4, 1, 1);
     _mainSection.getLayout().addComponent(_chordBrowser, 1, 3, 3, 1);
     _mainSection.getLayout().addComponent(_voicingSelector, 2, 0, 9, 1);
-    _mainSection.getLayout().addComponent(_progressionEditor, 4, 1, 7, 1);
+    _mainSection.getLayout().addComponent(_nextChordPanel, 3, 1, 7, 1);
+    _mainSection.getLayout().addComponent(_progressionEditor, 5, 1, 7, 1);
 
     _mainSection.getLayout("synth-tab").setDisplayGrid(false);
     _mainSection.getLayout("synth-tab").init({ 1 }, { 1 });
@@ -162,6 +190,7 @@ void AppLayout::onKeyScaleChanged(theory::Key key, theory::Scale scale)
     _voicingSelector.close();
 
     _chordBrowser.setKeyAndScale(key, scale);
+    _nextChordPanel.setKeyAndScale(key, scale);
     _progressionEditor.setScale(scale);
 
     syncStateToValueTree();
@@ -169,15 +198,19 @@ void AppLayout::onKeyScaleChanged(theory::Key key, theory::Scale scale)
 
 void AppLayout::onChordChanged(theory::Degree degree, const theory::Chord& newChord)
 {
-    juce::ignoreUnused(degree, newChord);
+    juce::ignoreUnused(degree);
 
+    setCurrentChordForSuggestions(newChord);
     syncStateToValueTree();
 }
 
 void AppLayout::onChordDragStarted(theory::Degree degree, const theory::Chord& chord)
 {
     const auto midiFile = theory::MidiExporter::writeSingleChordMidiFile(chord);
-    _inFlightChordDrags[midiFile.getFullPathName()] = degree;
+    _inFlightChordDrags[midiFile.getFullPathName()] = InFlightChordDrag {
+        chord,
+        theory::ProgressionSlot { degree, chord.popularityOrder }
+    };
 
     if (auto* dragContainer = findParentComponentOfClass<juce::DragAndDropContainer>())
         dragContainer->performExternalDragDropOfFiles({ midiFile.getFullPathName() }, false);
@@ -187,12 +220,25 @@ void AppLayout::onChordPreviewRequested(theory::Degree degree, const theory::Cho
 {
     juce::ignoreUnused(degree);
 
-    previewChord(chord);
+    setCurrentChordForSuggestions(chord);
+    playChordToSynthAndHost(chord);
 }
 
 void AppLayout::previewChord(const theory::Chord& chord)
 {
     _audioProcessor.getSynthEngine().previewChord(theory::NoteConvertor::voiceChordCloseToMiddleC(chord));
+}
+
+void AppLayout::playChordToSynthAndHost(const theory::Chord& chord)
+{
+    const auto notes = theory::NoteConvertor::voiceChordCloseToMiddleC(chord);
+    _audioProcessor.getSynthEngine().previewChord(notes);
+    _audioProcessor.getHostMidiEmitter().playChord(notes, 1000);
+}
+
+void AppLayout::setCurrentChordForSuggestions(const theory::Chord& chord)
+{
+    _nextChordPanel.setCurrentChord(chord);
 }
 
 void AppLayout::onVoicingSelectorRequested(theory::Degree degree, const std::vector<theory::Chord>& availableVoicings, const std::string& currentSymbol)
@@ -219,6 +265,7 @@ void AppLayout::onVoicingSelectorClosed()
 void AppLayout::setVoicingVisibility(bool isVisible)
 {
     _voicingSelector.setVisible(isVisible);
+    // Voicing selector is row 2 in the chords-tab grid.
     _mainSection.getLayout().setFixedRowHeight(2, isVisible ? 80.f : 0.f);
 
     // setFixedRowHeight only updates the fixed-height map - it takes effect on the next time
@@ -246,8 +293,8 @@ void AppLayout::onChordFileDropped(double startBeat, const juce::String& filePat
     if (it == _inFlightChordDrags.end())
         return;
 
-    if (const auto* chord = _chordBrowser.resolveSlot(theory::ProgressionSlot { it->second, 0 }))
-        _progressionEditor.addChordAtBeat(startBeat, *chord, theory::ProgressionSlot { it->second, chord->popularityOrder });
+    // Use the chord frozen at drag-start (works for browser cards and chromatic next-triads).
+    _progressionEditor.addChordAtBeat(startBeat, it->second.chord, it->second.sourceSlot);
 
     _inFlightChordDrags.erase(it);
 }

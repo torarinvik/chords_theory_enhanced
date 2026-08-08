@@ -23,6 +23,7 @@ add_executable(${PROJECT_NAME}_Tests
         MasterCompressorTests.cpp
         MidiEditorTests.cpp
         SectionPanelChangeTests.cpp
+        NextChordGeneratorTests.cpp
         main.cpp
 )
 
