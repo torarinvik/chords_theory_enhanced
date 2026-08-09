@@ -1,9 +1,13 @@
 #include "AppLayout.h"
 
+#include <set>
+
 #include "AppLocalisation.h"
 #include "Theory/ChordDatabase.h"
 #include "Theory/MidiExporter.h"
+#include "Theory/NextChordSequenceContext.h"
 #include "Theory/NoteConvertor.h"
+#include "Theory/NoteName.h"
 #include "Theory/SessionStateSerializer.h"
 
 AppLayout::AppLayout(ndsp::ParameterManager& parameterManager, PluginAudioProcessor& audioProcessor):
@@ -30,7 +34,7 @@ AppLayout::AppLayout(ndsp::ParameterManager& parameterManager, PluginAudioProces
     _nextChordPanel.setOnCandidateChosen([this](const theory::NextChordCandidate& candidate)
     {
         // Clicking the row body makes it the new "current" chord and re-ranks from there.
-        setCurrentChordForSuggestions(candidate.chord);
+        setCurrentChordForSuggestions(candidate.chord, true);
         playChordToSynthAndHost(candidate.chord);
     });
     _nextChordPanel.setOnCandidatePreview([this](const theory::NextChordCandidate& candidate)
@@ -259,8 +263,10 @@ void AppLayout::playChordToSynthAndHost(const theory::Chord& chord)
     _audioProcessor.getHostMidiEmitter().playChord(notes, 1000);
 }
 
-void AppLayout::setCurrentChordForSuggestions(const theory::Chord& chord)
+void AppLayout::setCurrentChordForSuggestions(const theory::Chord& chord, bool pinCurrent)
 {
+    _nextChordCurrentPinned = pinCurrent;
+
     const auto key = _keyScaleSelector.getKey();
     const auto scale = _keyScaleSelector.getScale();
     const auto& keyScale = theory::ChordDatabase::getInstance().get(key, scale);
@@ -270,8 +276,32 @@ void AppLayout::setCurrentChordForSuggestions(const theory::Chord& chord)
     _nextChordPanel.setCurrentChord(chord, std::move(sequence));
 }
 
+void AppLayout::syncNextChordFromProgressionTail()
+{
+    const auto key = _keyScaleSelector.getKey();
+    const auto scale = _keyScaleSelector.getScale();
+    const auto& keyScale = theory::ChordDatabase::getInstance().get(key, scale);
+    const auto timeline = theory::buildProgressionTimeline(
+        _progressionEditor.getMidiEditorState(), keyScale);
+
+    if (timeline.empty() || timeline.last() == nullptr)
+        return;
+
+    _nextChordCurrentPinned = false;
+    const auto& last = *timeline.last();
+    auto sequence = theory::buildSequenceContextBeforeLast(
+        _progressionEditor.getMidiEditorState(), keyScale);
+    _nextChordPanel.setCurrentChord(last.chord, std::move(sequence));
+}
+
 void AppLayout::refreshNextChordSequenceContext()
 {
+    if (!_nextChordCurrentPinned)
+    {
+        syncNextChordFromProgressionTail();
+        return;
+    }
+
     const auto key = _keyScaleSelector.getKey();
     const auto scale = _keyScaleSelector.getScale();
     const auto& keyScale = theory::ChordDatabase::getInstance().get(key, scale);
@@ -355,14 +385,51 @@ void AppLayout::onProgressionDragStarted()
 
 void AppLayout::onChordBlockPreviewRequested(const std::vector<int>& midiNotes)
 {
-    // Same audition path as chord-card / next-chord play: internal synth + host MIDI out.
     _audioProcessor.getSynthEngine().previewChord(midiNotes);
     _audioProcessor.getHostMidiEmitter().playChord(midiNotes, 1000);
+
+    if (midiNotes.empty())
+        return;
+
+    // Prefer the last progression block's frozen chord if its notes match this preview.
+    const auto key = _keyScaleSelector.getKey();
+    const auto scale = _keyScaleSelector.getScale();
+    const auto& keyScale = theory::ChordDatabase::getInstance().get(key, scale);
+    const auto timeline = theory::buildProgressionTimeline(
+        _progressionEditor.getMidiEditorState(), keyScale);
+    if (timeline.last() != nullptr)
+    {
+        setCurrentChordForSuggestions(timeline.last()->chord, true);
+        return;
+    }
+
+    theory::Chord chord;
+    chord.readableName = "preview";
+    chord.symbol = "preview";
+    int role = 1;
+    std::set<int> seen;
+    for (const int midi : midiNotes)
+    {
+        const int pc = ((midi % 12) + 12) % 12;
+        if (!seen.insert(pc).second)
+            continue;
+        static constexpr const char* kNames[12] = {
+            "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
+        };
+        chord.notes.push_back(theory::NoteName { kNames[pc], kNames[pc], role });
+        role = role == 1 ? 3 : (role == 3 ? 5 : (role == 5 ? 7 : role + 1));
+    }
+    if (!chord.notes.empty())
+        setCurrentChordForSuggestions(chord, true);
 }
 
 void AppLayout::onContentChanged()
 {
-    refreshNextChordSequenceContext();
+    // Progression is source of truth unless the user pinned a current chord from the browser/list.
+    if (!_nextChordCurrentPinned)
+        syncNextChordFromProgressionTail();
+    else
+        refreshNextChordSequenceContext();
     syncStateToValueTree();
 }
 

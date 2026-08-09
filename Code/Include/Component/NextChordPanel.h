@@ -18,14 +18,22 @@ namespace component
 
 // Ranked, scrollable list of next-chord suggestions (triads, sus, power, sevenths).
 // Drama slider morphs ranking from smooth/expected (0) to remote/colourful (1).
+// Mode toggle: Theory (rule-based) vs AI (offline ChordSeqAI GRU, hybrid labels).
 // Each row has:
 //  - a play button (preview only — does not change "current")
 //  - drag-to-sequencer / DAW (same temp-.mid mechanism as ChordCard)
 //  - click on the rest of the row to make it the new current chord
 class NextChordPanel : public nui::Component,
-                       private juce::Slider::Listener
+                       private juce::Slider::Listener,
+                       public nelement::TextButton::OnClickListener
 {
 public:
+    enum class SuggestionMode
+    {
+        Theory,
+        Ai
+    };
+
     using OnCandidateChosen = std::function<void(const theory::NextChordCandidate&)>;
     using OnCandidatePreview = std::function<void(const theory::NextChordCandidate&)>;
     using OnCandidateDragStarted = std::function<void(const theory::NextChordCandidate&)>;
@@ -48,12 +56,17 @@ public:
     [[nodiscard]] float getDrama01() const { return _drama01; }
     [[nodiscard]] const theory::SequenceContext& getSequenceContext() const { return _sequence; }
 
+    void setSuggestionMode(SuggestionMode mode);
+    [[nodiscard]] SuggestionMode getSuggestionMode() const { return _mode; }
+
     void setOnCandidateChosen(OnCandidateChosen callback) { _onCandidateChosen = std::move(callback); }
     void setOnCandidatePreview(OnCandidatePreview callback) { _onCandidatePreview = std::move(callback); }
     void setOnCandidateDragStarted(OnCandidateDragStarted callback) { _onCandidateDragStarted = std::move(callback); }
 
     [[nodiscard]] const std::vector<theory::NextChordCandidate>& getCandidates() const { return _candidates; }
     [[nodiscard]] const std::optional<theory::Chord>& getCurrentChord() const { return _currentChord; }
+
+    void onButtonClick(const std::string& componentID) override;
 
 private:
     void sliderValueChanged(juce::Slider* slider) override;
@@ -98,7 +111,8 @@ private:
 
     void regenerate();
     void rebuildList();
-    void syncDramaLabels();
+    void syncLabels();
+    void syncModeButton();
 
     theory::Key _key = theory::Key::C;
     theory::Scale _scale = theory::Scale::Major;
@@ -106,12 +120,14 @@ private:
     theory::SequenceContext _sequence;
     std::vector<theory::NextChordCandidate> _candidates;
     float _drama01 = 0.35f;
+    SuggestionMode _mode = SuggestionMode::Theory;
 
     OnCandidateChosen _onCandidateChosen;
     OnCandidatePreview _onCandidatePreview;
     OnCandidateDragStarted _onCandidateDragStarted;
 
     nelement::Text _title { "next-chord-title", "", "Next chords" };
+    nelement::TextButton _modeButton { "next-chord-mode", "Theory" };
     nelement::Text _currentLabel { "next-chord-current", "", "" };
     nelement::Text _dramaLabel { "next-chord-drama-label", "", "Drama" };
     nelement::Text _dramaLowLabel { "next-chord-drama-low", "", "Smooth" };
@@ -124,6 +140,7 @@ private:
     static constexpr int kPadding = 8;
     static constexpr int kScrollbarThickness = 8;
     static constexpr int kDramaRowHeight = 22;
+    static constexpr int kModeButtonWidth = 56;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(NextChordPanel)
 };

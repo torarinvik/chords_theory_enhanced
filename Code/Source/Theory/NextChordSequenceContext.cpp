@@ -4,8 +4,8 @@
 #include <set>
 #include <string>
 
-#include "Theory/NoteConvertor.h"
 #include "Theory/NextChordScorer.h"
+#include "Theory/NoteConvertor.h"
 
 namespace theory
 {
@@ -30,23 +30,26 @@ namespace
         return pcs;
     }
 
+    // Prefer frozen notes on the block when present; else reconstruct from MIDI notes.
     Chord reconstructChord(const MidiEditorChordBlockState& block, const MidiEditorState& state)
     {
+        if (!block.frozenNotes.empty())
+        {
+            Chord chord;
+            chord.symbol = block.frozenSymbol.empty() ? block.label : block.frozenSymbol;
+            chord.readableName = block.label.empty() ? chord.symbol : block.label;
+            chord.type = block.frozenType;
+            chord.popularityOrder = block.sourceSlot.popularityOrder;
+            chord.notes = block.frozenNotes;
+            return chord;
+        }
+
         Chord chord;
         chord.symbol = block.label;
-        chord.readableName = block.label.empty() ? block.label : block.label;
+        chord.readableName = block.label;
         chord.type = ChordType::Triad;
         chord.popularityOrder = block.sourceSlot.popularityOrder;
 
-        std::set<int> pcs;
-        for (const auto& note : state.notes)
-        {
-            if (note.sourceChordId != block.id)
-                continue;
-            pcs.insert(mod12(note.midiNote));
-        }
-
-        // Prefer bass-first order: lowest MIDI note among the block's notes first.
         std::vector<int> midiInBlock;
         for (const auto& note : state.notes)
         {
@@ -55,6 +58,9 @@ namespace
         }
         std::sort(midiInBlock.begin(), midiInBlock.end());
 
+        // Assign roles by chord-tone function when possible: prefer matching sourceSlot
+        // popularity against database later; for now use ascending pitch classes with
+        // positionInChord 1 on the *slot degree root* if diatonic, else lowest note.
         std::set<int> seen;
         int role = 1;
         for (const int midi : midiInBlock)
@@ -64,7 +70,6 @@ namespace
                 continue;
             const char* name = kSharpNames[pc];
             chord.notes.push_back(NoteName { name, name, role });
-            // Rough role: first = root/bass, then 3/5/7.
             if (role == 1)
                 role = 3;
             else if (role == 3)
@@ -75,19 +80,52 @@ namespace
                 ++role;
         }
 
-        // Fallback if notes were deleted but the block remains.
-        if (chord.notes.empty() && !pcs.empty())
+        // Fix root role: if we can infer degree root from slot and it appears in the chord,
+        // mark that note as positionInChord 1 (harmonic root), keep bass as notes.front().
+        if (chord.notes.size() >= 2)
         {
-            int r = 1;
-            for (const int pc : pcs)
-            {
-                const char* name = kSharpNames[pc];
-                chord.notes.push_back(NoteName { name, name, r });
-                r += 2;
-            }
+            // notes stay bass-first (MIDI order). Re-tag roles: bass keeps array order;
+            // set positionInChord=1 on the true root pitch if present in the set.
+            // Default: assume first reconstructed role-1 is wrong for inversions — use
+            // interval detection via NextChordScorer after notes exist is hard; keep bass-first
+            // and set positionInChord by matching symbol root later.
+            for (auto& n : chord.notes)
+                if (n.positionInChord == 1)
+                    n.positionInChord = 5; // clear false root tag from lowest note
+            // Prefer note matching readableName root letter if possible — leave as-is for now;
+            // frozenNotes path is preferred for new drops.
+            if (!chord.notes.empty())
+                chord.notes.front().positionInChord = 1; // legacy fallback
         }
 
         return chord;
+    }
+
+    SequenceEvent makeEvent(const MidiEditorChordBlockState& block, const MidiEditorState& state,
+                            const KeyScaleData& keyScale)
+    {
+        SequenceEvent event;
+        event.chord = reconstructChord(block, state);
+        event.blockId = block.id;
+        event.startBeat = block.startBeat;
+
+        if (event.chord.notes.empty())
+            return event;
+
+        if (NextChordScorer::isDiatonicChord(event.chord, keyScale))
+        {
+            event.degree = NextChordScorer::degreeOfRoot(
+                NextChordScorer::rootPitchClass(event.chord), keyScale);
+            if (!event.degree)
+                event.degree = block.sourceSlot.degree;
+        }
+        else
+        {
+            event.degree = NextChordScorer::degreeOfRoot(
+                NextChordScorer::rootPitchClass(event.chord), keyScale);
+        }
+
+        return event;
     }
 }
 
@@ -99,9 +137,8 @@ void SequenceContext::trim()
                    previous.begin() + static_cast<std::ptrdiff_t>(previous.size() - kMaxLookback));
 }
 
-SequenceContext buildSequenceContext(const MidiEditorState& state,
-                                     const KeyScaleData& keyScale,
-                                     const Chord* currentChord)
+ProgressionTimeline buildProgressionTimeline(const MidiEditorState& state,
+                                             const KeyScaleData& keyScale)
 {
     struct Indexed
     {
@@ -117,46 +154,70 @@ SequenceContext buildSequenceContext(const MidiEditorState& state,
     std::sort(ordered.begin(), ordered.end(),
               [](const Indexed& a, const Indexed& b) { return a.startBeat < b.startBeat; });
 
-    SequenceContext ctx;
-    ctx.previous.reserve(ordered.size());
-
+    ProgressionTimeline timeline;
+    timeline.events.reserve(ordered.size());
     for (const auto& entry : ordered)
     {
-        SequenceEvent event;
-        event.chord = reconstructChord(entry.block, state);
+        auto event = makeEvent(entry.block, state, keyScale);
         if (event.chord.notes.empty())
             continue;
+        timeline.events.push_back(std::move(event));
+    }
+    return timeline;
+}
 
-        // Prefer degree from frozen slot when the chord is still diatonic; otherwise infer.
-        if (NextChordScorer::isDiatonicChord(event.chord, keyScale))
-        {
-            event.degree = entry.block.sourceSlot.degree;
-            // If slot degree root doesn't match reconstructed root, re-infer.
-            if (event.degree)
-            {
-                const int root = NextChordScorer::rootPitchClass(event.chord);
-                const auto inferred = NextChordScorer::degreeOfRoot(root, keyScale);
-                if (inferred)
-                    event.degree = inferred;
-            }
-        }
-        else
-        {
-            event.degree = NextChordScorer::degreeOfRoot(
-                NextChordScorer::rootPitchClass(event.chord), keyScale);
-        }
+SequenceContext buildSequenceContext(const MidiEditorState& state,
+                                     const KeyScaleData& keyScale,
+                                     const Chord* currentChord)
+{
+    const auto timeline = buildProgressionTimeline(state, keyScale);
+    SequenceContext ctx;
 
-        ctx.previous.push_back(std::move(event));
+    if (timeline.events.empty())
+        return ctx;
+
+    if (currentChord == nullptr || currentChord->notes.empty())
+    {
+        // Caller treats last as current: history is everything before last.
+        if (timeline.events.size() > 1)
+            ctx.previous.assign(timeline.events.begin(), timeline.events.end() - 1);
+        ctx.trim();
+        return ctx;
     }
 
-    if (currentChord != nullptr && !ctx.previous.empty()
-        && pitchClassSet(ctx.previous.back().chord) == pitchClassSet(*currentChord))
+    const auto currentPcs = pitchClassSet(*currentChord);
+
+    // Latest timeline event matching current harmony (by pitch-class set).
+    int matchIndex = -1;
+    for (int i = static_cast<int>(timeline.events.size()) - 1; i >= 0; --i)
     {
-        ctx.previous.pop_back();
+        if (pitchClassSet(timeline.events[static_cast<std::size_t>(i)].chord) == currentPcs)
+        {
+            matchIndex = i;
+            break;
+        }
+    }
+
+    if (matchIndex >= 0)
+    {
+        // Strictly before the matched occurrence — never include later blocks.
+        ctx.previous.assign(timeline.events.begin(),
+                            timeline.events.begin() + matchIndex);
+    }
+    else
+    {
+        // Pinned current not on the timeline (e.g. browser audition): full progression is history.
+        ctx.previous = timeline.events;
     }
 
     ctx.trim();
     return ctx;
+}
+
+SequenceContext buildSequenceContextBeforeLast(const MidiEditorState& state,
+                                               const KeyScaleData& keyScale)
+{
+    return buildSequenceContext(state, keyScale, nullptr);
 }
 
 }

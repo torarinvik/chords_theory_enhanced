@@ -68,6 +68,10 @@ clone with `--recurse-submodules` or run `git submodule update --init --recursiv
   file/lock, separate from `AppSettings`) — shared across every plugin instance and DAW project,
   same pattern as `AppSettings` itself (including a public file-parameterized constructor for test
   isolation).
+- `ChordSeqAIModel`/`NextChordAiGenerator` — offline ChordSeqAI recurrent GRU (bundled
+  `chordseqai_weights.bin` + vocab JSON, pure C++ inference, no network). Maps sequence tokens
+  → top-K chords; hybrid ranking with `NextChordScorer` for Fit/Tension labels. UI toggle on
+  `NextChordPanel` (Theory / AI). MIT assets: see `Assets/ThirdParty/ChordSeqAI_NOTICE.txt`.
 - `MidiEditorState`/`SessionState`/`SessionStateSerializer` — pure data + `juce::ValueTree`
   (de)serialization for everything a session needs to survive a DAW project close/reopen: Key,
   Scale, the chosen chord per degree, and `MidiEditorState` (a pure-data mirror of `MidiEditor`'s

@@ -158,6 +158,7 @@ private:
         double lengthBeats = 1.0;
         theory::ProgressionSlot sourceSlot; // frozen at drop time - degree + the resolved chord's
                                              // popularityOrder; never re-resolved live afterward
+        theory::Chord frozenChord; // full harmony at drop time (for next-chord context)
     };
 
     enum class DragMode { None, MoveNote, ResizeNoteStart, ResizeNoteEnd, MoveChordBlock, ResizeLoopStart, ResizeLoopEnd };

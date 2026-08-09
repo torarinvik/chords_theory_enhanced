@@ -1,9 +1,11 @@
 #include "Theory/NextChordGenerator.h"
 
+#include <map>
 #include <set>
 #include <tuple>
 #include <vector>
 
+#include "Theory/MechanismCandidateGenerator.h"
 #include "Theory/NextChordScorer.h"
 #include "Theory/TriadLibrary.h"
 
@@ -20,7 +22,6 @@ namespace
         return pcs;
     }
 
-    // Bass pitch class + full pitch-class set: inversions of the same harmony are distinct.
     using VoicingKey = std::tuple<int, std::set<int>>;
 
     VoicingKey voicingKey(const Chord& chord)
@@ -32,6 +33,15 @@ namespace
     bool sameVoicing(const Chord& a, const Chord& b)
     {
         return voicingKey(a) == voicingKey(b);
+    }
+
+    using IdeaKey = std::tuple<int, int>; // rootPc, quality enum
+
+    IdeaKey ideaKey(const Chord& chord)
+    {
+        const int root = NextChordScorer::rootPitchClass(chord);
+        const auto quality = static_cast<int>(NextChordScorer::detectTriadQuality(chord));
+        return { root, quality };
     }
 
     std::optional<Degree> matchingDegree(const Chord& sonority, const KeyScaleData& keyScale)
@@ -55,31 +65,79 @@ std::vector<NextChordCandidate> NextChordGenerator::generate(const Chord& curren
     if (currentChord.notes.empty())
         return {};
 
-    const auto catalogue = TriadLibrary::allTriads(keyScale.key);
-
     std::vector<NextChordCandidate> candidates;
-    candidates.reserve(catalogue.size());
     std::set<VoicingKey> seenVoicings;
 
-    for (const auto& chord : catalogue)
+    auto consider = [&](NextChordCandidate candidate)
     {
-        // Keep inversions as separate candidates; only collapse exact duplicates (same bass + pcs).
-        if (!seenVoicings.insert(voicingKey(chord)).second)
-            continue;
+        if (candidate.chord.notes.empty())
+            return;
+        if (sameVoicing(candidate.chord, currentChord))
+            return;
+        if (!seenVoicings.insert(voicingKey(candidate.chord)).second)
+            return;
+        if (!candidate.degree)
+            candidate.degree = matchingDegree(candidate.chord, keyScale);
+        candidates.push_back(std::move(candidate));
+    };
 
-        // Skip the current voicing itself, but allow other inversions of the same harmony
-        // (e.g. C → C/E is a valid smooth next-chord move).
-        if (sameVoicing(chord, currentChord))
-            continue;
+    // 1) Mechanism-driven ideas first (functionally motivated).
+    for (auto& c : MechanismCandidateGenerator::generate(currentChord, keyScale, sequence))
+        consider(std::move(c));
 
+    // 2) Full catalogue for coverage (still idea-deduped later).
+    for (const auto& chord : TriadLibrary::allTriads(keyScale.key))
+    {
         NextChordCandidate candidate;
         candidate.chord = chord;
         candidate.degree = matchingDegree(chord, keyScale);
-        candidates.push_back(std::move(candidate));
+        consider(std::move(candidate));
     }
 
     NextChordScorer::scoreAndSort(currentChord, keyScale, candidates, drama01, sequence);
-    return candidates;
+
+    // 3) One-step lookahead: reward productive tension (strong available continuation).
+    constexpr float kLookaheadWeight = 0.22f;
+    for (auto& candidate : candidates)
+    {
+        const float productivity = lookaheadProductivity(candidate.chord, keyScale, drama01);
+        candidate.rankingScore += kLookaheadWeight * productivity;
+        if (productivity > 0.55f && candidate.metrics.tension > 0.4f)
+        {
+            // Tag productive tension lightly if reason is sparse.
+            if (candidate.reasonLabel.find("→") == std::string::npos
+                && candidate.metrics.resolution > 0.35f)
+            {
+                // Keep label clean; productivity only affects rank.
+            }
+        }
+    }
+
+    std::stable_sort(candidates.begin(), candidates.end(),
+        [](const NextChordCandidate& a, const NextChordCandidate& b)
+        {
+            if (std::abs(a.rankingScore - b.rankingScore) > 1.0e-5f)
+                return a.rankingScore > b.rankingScore;
+            if (a.fitPercent != b.fitPercent)
+                return a.fitPercent > b.fitPercent;
+            return a.chord.symbol < b.chord.symbol;
+        });
+
+    // 4) Diversity: one voicing per harmonic idea (root + quality).
+    std::vector<NextChordCandidate> diverse;
+    diverse.reserve(candidates.size());
+    std::map<IdeaKey, std::size_t> bestIndexByIdea;
+
+    for (std::size_t i = 0; i < candidates.size(); ++i)
+    {
+        const auto key = ideaKey(candidates[i].chord);
+        if (bestIndexByIdea.find(key) != bestIndexByIdea.end())
+            continue;
+        bestIndexByIdea.emplace(key, diverse.size());
+        diverse.push_back(std::move(candidates[i]));
+    }
+
+    return diverse;
 }
 
 }

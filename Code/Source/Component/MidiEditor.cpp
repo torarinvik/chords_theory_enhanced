@@ -191,7 +191,7 @@ void MidiEditor::addChordAtBeat(double startBeat, const theory::Chord& chord, co
     }
 
     const auto chordId = _nextChordBlockId++;
-    _chordBlocks.push_back({ chordId, chord.readableName, resolvedStart, resolvedLength, sourceSlot });
+    _chordBlocks.push_back({ chordId, chord.readableName, resolvedStart, resolvedLength, sourceSlot, chord });
 
     for (const auto midiNote : theory::NoteConvertor::voiceChordCloseToMiddleC(chord))
         _notes.push_back({ midiNote, resolvedStart, resolvedLength, chordId });
@@ -268,7 +268,18 @@ theory::MidiEditorState MidiEditor::getState() const
 
     state.chordBlocks.reserve(_chordBlocks.size());
     for (const auto& block : _chordBlocks)
-        state.chordBlocks.push_back({ block.id, block.label, block.startBeat, block.lengthBeats, block.sourceSlot });
+    {
+        theory::MidiEditorChordBlockState out;
+        out.id = block.id;
+        out.label = block.label;
+        out.startBeat = block.startBeat;
+        out.lengthBeats = block.lengthBeats;
+        out.sourceSlot = block.sourceSlot;
+        out.frozenSymbol = block.frozenChord.symbol;
+        out.frozenType = block.frozenChord.type;
+        out.frozenNotes = block.frozenChord.notes;
+        state.chordBlocks.push_back(std::move(out));
+    }
 
     return state;
 }
@@ -286,7 +297,20 @@ void MidiEditor::restoreState(const theory::MidiEditorState& state)
     _chordBlocks.clear();
     _chordBlocks.reserve(state.chordBlocks.size());
     for (const auto& block : state.chordBlocks)
-        _chordBlocks.push_back({ block.id, block.label, block.startBeat, block.lengthBeats, block.sourceSlot });
+    {
+        ChordBlockData data;
+        data.id = block.id;
+        data.label = block.label;
+        data.startBeat = block.startBeat;
+        data.lengthBeats = block.lengthBeats;
+        data.sourceSlot = block.sourceSlot;
+        data.frozenChord.symbol = block.frozenSymbol.empty() ? block.label : block.frozenSymbol;
+        data.frozenChord.readableName = block.label;
+        data.frozenChord.type = block.frozenType;
+        data.frozenChord.popularityOrder = block.sourceSlot.popularityOrder;
+        data.frozenChord.notes = block.frozenNotes;
+        _chordBlocks.push_back(std::move(data));
+    }
 
     _nextChordBlockId = state.nextChordBlockId;
 
