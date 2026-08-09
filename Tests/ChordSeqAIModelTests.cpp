@@ -85,23 +85,28 @@ TEST_CASE("ChordSeqAIModel tokenForChord works from TriadLibrary C major", "[Cho
     CHECK(*token == 685);
 }
 
-TEST_CASE("NextChordAiGenerator produces hybrid candidates from C", "[ChordSeqAI][NextChord]")
+TEST_CASE("NextChordAiGenerator produces pure model-ranked candidates from C", "[ChordSeqAI][NextChord]")
 {
     REQUIRE(NextChordAiGenerator::isAvailable());
 
     const auto& keyScale = theory::ChordDatabase::getInstance().get(Key::C, Scale::Major);
 
     const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C);
-    const auto candidates = NextChordAiGenerator::generate(c, keyScale, 0.35f, {}, 16);
+    const auto candidates = NextChordAiGenerator::generate(c, keyScale, {}, 16);
     REQUIRE_FALSE(candidates.empty());
 
     std::set<std::string> names;
-    for (const auto& cand : candidates)
+    for (std::size_t i = 0; i < candidates.size(); ++i)
     {
+        const auto& cand = candidates[i];
         names.insert(cand.chord.readableName);
         CHECK_FALSE(cand.chord.notes.empty());
-        // AI confidence tag present in reason label.
+        // Pure AI: confidence tag only — no theory reason blend.
         CHECK(cand.reasonLabel.find("AI") != std::string::npos);
+        CHECK(cand.reasonLabel.find("·") == std::string::npos);
+        // Ranked by model probability descending.
+        if (i > 0)
+            CHECK(candidates[i - 1].rankingScore >= cand.rankingScore - 1.0e-6f);
     }
 
     // Expect familiar diatonic follow-ups among AI suggestions after C.
