@@ -38,6 +38,15 @@ public:
     // same contract as above. Shared by MidiExporter and the chord audio-preview path so both
     // "turn a Chord into playable MIDI notes" call sites go through one implementation.
     static std::vector<int> voiceChordCloseToMiddleC(const Chord& chord);
+
+    // Among bass placements (inversions) of `target`, pick the one with the smoothest
+    // voice-leading / least transition cost from `previous`. Same pitch-class set; only bass
+    // order changes. If previous is empty, returns target unchanged.
+    // Used for browser / next-chord play-preview so e.g. C→G prefers G/B when smoother.
+    static Chord chooseSmoothestInversion(const Chord& previous, const Chord& target);
+
+    // chooseSmoothestInversion then voiceChordCloseToMiddleC — full preview path.
+    static std::vector<int> voiceSmoothestPreview(const Chord& previous, const Chord& target);
 };
 
 }

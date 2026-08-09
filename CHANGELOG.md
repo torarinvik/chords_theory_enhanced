@@ -15,11 +15,12 @@ Use this to resume development without re-discovering context.
 ### What works now
 
 - Standalone / AU / VST3 **Chords Theory Enhanced** builds.
-- **Next chords** panel: ranked suggestions from current chord, with:
-  - Catalogue: maj / min / dim / aug / sus2 / sus4 / power / maj7 / m7 / dom7 / m7b5 (132 named → **112 unique** PC sets after dedupe).
-  - **Drama** slider (Smooth ↔ Wild): reorders list toward a tension target; bar still shows objective tension %.
-  - **Sequence memory**: previous progression chords feed the scorer (ii–V–I, 5ths chains, repeats, pop loop, Andalusian, etc.).
-  - Preview (play), drag to sequencer/DAW, click row → new “current”.
+- **Next chords** panel (dual columns):
+  - **Theory (left)**: destination-first ranking (one idea per harmonic family); Drama = soft tension/surprise curves + trajectory/path/AI ensemble; Fit/Tension meters; moves only (no power/sus prolongations as top ideas).
+  - **AI (right)**: pure offline ChordSeqAI probability rank (bundled weights; no network).
+  - **Sequence memory**: previous progression chords feed theory scoring and AI tokens.
+  - Preview (play) / click: **smoothest inversion** vs last auditioned chord; drag to sequencer/DAW; click row → new “current”.
+- **Chord browser** click/preview uses the same smooth-inversion audition path.
 - **Host MIDI out** for routing suggestions to other tracks.
 - Progression sequencer: play, **clear all (✕)**, presets, drag-out, session persistence.
 
@@ -44,36 +45,50 @@ open "build/ChordsTheory_artefacts/Debug/Standalone/Chords Theory Enhanced.app"
 | Catalogue | `Code/Include/Theory/TriadLibrary.h`, `Code/Source/Theory/TriadLibrary.cpp` |
 | Score / rank | `NextChordScorer.h/.cpp` |
 | Sequence memory | `NextChordSequenceContext.h/.cpp` — `buildSequenceContext(MidiEditorState, …)` |
-| Pool + sort | `NextChordGenerator.h/.cpp` |
+| Pool + sort | `NextChordGenerator.h/.cpp` (families, prolong filter, ensemble) |
 | Offline AI | `ChordSeqAIModel.h/.cpp`, `NextChordAiGenerator.h/.cpp`, assets `chordseqai_*` (pure model rank) |
 | UI | `Component/NextChordPanel.h/.cpp` (dual columns: Theory left, AI right) |
-| Wiring | `AppLayout.h/.cpp` — `setCurrentChordForSuggestions`, `refreshNextChordSequenceContext` |
+| Smooth preview | `NoteConvertor::chooseSmoothestInversion` — browser + next-chord play/click |
+| Wiring | `AppLayout.h/.cpp` — `_lastPreviewChord`, `playChordToSynthAndHost`, sequence pin |
 | Clear sequence | `ProgressionEditor::clearAll()` + ✕ header button |
 | Host MIDI | `Audio/HostMidiEmitter` (from earlier next-triad commit) |
-| Tests | `Tests/NextChordGeneratorTests.cpp` `[NextChord]`; `ChordSeqAIModelTests.cpp` `[ChordSeqAI]` |
+| Tests | `NextChordGeneratorTests` `[NextChord]` / `[Architecture]`; `ChordSeqAIModelTests` `[ChordSeqAI]`; `NoteConvertorTests` |
 | Strings | `Assets/Languages/en.lang` (`next_chord_*`, `progression_clear_tooltip`) |
 
 ### Known limits (not “perfect” yet)
 
-1. **No multi-bar planning** — ranks one next chord, not a full path (though phrase memory helps).
-2. **No style profile** — drama ≠ jazz vs pop vs metal priors.
-3. **Root-position catalogue** — no inversions / bass-line model in the pool.
-4. **Theory column is rules-based**; **AI column** uses offline ChordSeqAI (pure model probability, no hybrid). Still no multi-bar planning or style conditioning.
-5. **Chromatic drops** still freeze `ProgressionSlot` (degree may be a fallback for non-diatonic next-chords); history rebuilds from **MIDI notes + labels**, so PC sets stay correct.
-6. `MidiEditor::clear()` still does **not** fire `onContentChanged` itself; user clear goes through `ProgressionEditor::clearAll()` which notifies listeners.
+1. **No multi-bar planning** — ranks one next chord (path value / 1–2 step lookahead only).
+2. **No style profile** — drama ≠ jazz vs pop vs metal priors; no learned ranking weights.
+3. **List shows idea symbols** (often root position) while **audition** may play a smoother inversion — labels may not match sounding bass until UI surfaces the chosen slash.
+4. **Theory / AI columns still separate in UI** — theory score already blends AI expectedness; user-facing single list not fully fused.
+5. **Chromatic drops** still freeze `ProgressionSlot`; history rebuilds from MIDI notes + labels.
+6. `MidiEditor::clear()` still does **not** fire `onContentChanged` itself; user clear goes through `ProgressionEditor::clearAll()`.
+7. **Family expand UI** (variants under Am: Am7, A5, Am/C) not built — incompletes only suppressed from top list.
 
 ### Good next steps (priority ideas)
 
-1. **Style / genre bias** (or second slider) morphing grammar weights.
-2. **Richer history UI** (show last few chord symbols, not only “N in sequence”).
-3. **Store full `Chord` on chord blocks** so history never depends on MIDI reconstruction.
-4. **Inversions / bass motion** in catalogue or scoring.
-5. **Commit / push** `work` when ready; keep CHANGELOG updated per feature batch.
-6. Optional: unit tests for `ProgressionEditor::clearAll` and AppLayout sequence wiring (panel currently covered via theory tests).
+1. Show chosen slash voicing on play (or expand-row variants under each idea).
+2. Single musician-facing recommendation list (AI expectedness as feature only; dual columns = debug).
+3. Style / genre bias or continuous style embedding.
+4. Phrase position + optional melody compatibility.
+5. User preference / pairwise ranking data (local).
+6. Store full `Chord` on chord blocks for robust history.
+7. Push `work` when ready; keep CHANGELOG updated per feature batch.
 
 ---
 
 ## [Unreleased] / recent on `work`
+
+### Smooth-inversion audition on play / click
+
+- Browser card click/preview and next-chord play/row-click audition the **smoothest inversion**
+  of the target idea relative to the last played (or current) harmony.
+- `NoteConvertor::chooseSmoothestInversion` / `voiceSmoothestPreview` — voice-leading + bass-step cost
+  over TriadLibrary inversions (and bass rotations for exotic colours).
+- `AppLayout` keeps `_lastPreviewChord`; play runs **before** pinning a new current chord so the
+  reference is the previous harmony (e.g. C → G often sounds **G/B**).
+- List labels stay idea-level (G / Am); drag-out MIDI still uses the listed voicing.
+- Tests: `NoteConvertorTests` — C→G prefers bass B; empty previous leaves target unchanged.
 
 ### Offline ChordSeqAI next-chord column
 
@@ -81,6 +96,7 @@ open "build/ChordsTheory_artefacts/Debug/Standalone/Chords Theory Enhanced.app"
   `Assets/Data/chordseqai_weights.bin` + `chordseqai_vocab.json` (MIT, ChordSeqAI).
 - `Theory/ChordSeqAIModel` + `NextChordAiGenerator`: pure model probability ranking (no symbolic blend).
 - Next chords panel **dual columns**: Theory (left, Drama/Fit/Tension) | AI (right, confidence %).
+- Theory final score **ensemble**: blends AI expectedness + path value into ranking (AI column stays pure).
 - Export script: `Scripts/export_chordseqai_assets.py`.
 - Tests: `Tests/ChordSeqAIModelTests.cpp` tag `[ChordSeqAI]`.
 - Attribution: `Assets/ThirdParty/ChordSeqAI_NOTICE.txt`.
@@ -109,6 +125,16 @@ open "build/ChordsTheory_artefacts/Debug/Standalone/Chords Theory Enhanced.app"
 - Tension-match **capped**; coherence dominates so Bb cannot beat Dm on T20 vs T25 alone.
 - C→F no longer labelled “resolve” (predominant departure); only true V/subV resolutions say resolve.
 - Contextual flats for mixture roots (`Bb`); incomplete sonorities avoid false `vi`/`ii` romans.
+
+### Commit map (this batch on `work`)
+
+| Commit | Summary |
+|--------|---------|
+| `ea7524f` | Offline ChordSeqAI + Theory/AI toggle (later dual columns) |
+| `39586f7` | Dual-column UI: pure theory left, pure AI right |
+| `8055fa9` | Destination-first family ranking |
+| `6e7efd2` | Drama curves, ensemble, incomplete-chord fix, labels/spelling |
+| *(uncommitted → this)* | Smooth-inversion play/click + CHANGELOG handoff refresh |
 
 
 ### e57ee43 — `feat: sequence-aware next-chord ranking and progression clear`
