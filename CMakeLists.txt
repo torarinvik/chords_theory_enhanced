@@ -91,6 +91,9 @@ juce_add_binary_data("${PROJECT_NAME}_Assets" SOURCES
         ${CMAKE_CURRENT_LIST_DIR}/Assets/Languages/it.lang
         ${CMAKE_CURRENT_LIST_DIR}/Assets/Languages/pt.lang
         ${CMAKE_CURRENT_LIST_DIR}/Assets/Data/chords.json
+        # Offline ChordSeqAI recurrent_net (MIT) — pure C++ inference, no network.
+        ${CMAKE_CURRENT_LIST_DIR}/Assets/Data/chordseqai_weights.bin
+        ${CMAKE_CURRENT_LIST_DIR}/Assets/Data/chordseqai_vocab.json
 )
 
 juce_add_plugin(

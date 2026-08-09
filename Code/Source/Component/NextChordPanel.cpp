@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include "Theory/ChordDatabase.h"
+#include "Theory/NextChordAiGenerator.h"
 #include "Theory/NextChordGenerator.h"
 
 namespace component
@@ -187,6 +188,7 @@ NextChordPanel::NextChordPanel(const std::string& identifier):
     Component(identifier)
 {
     addAndMakeVisible(_title);
+    addAndMakeVisible(_modeButton);
     addAndMakeVisible(_currentLabel);
     addAndMakeVisible(_dramaLabel);
     addAndMakeVisible(_dramaLowLabel);
@@ -199,6 +201,14 @@ NextChordPanel::NextChordPanel(const std::string& identifier):
     _dramaLabel.setFontSize(nui::Theme::SMALL);
     _dramaLowLabel.setFontSize(nui::Theme::SMALL);
     _dramaHighLabel.setFontSize(nui::Theme::SMALL);
+
+    _modeButton.setFontSize(nui::Theme::SMALL);
+    _modeButton.addOnClickListener(this);
+    if (!theory::NextChordAiGenerator::isAvailable())
+    {
+        _modeButton.setEnabled(false);
+        _modeButton.setHelpText(theory::NextChordAiGenerator::unavailableReason());
+    }
 
     _dramaSlider.setSliderStyle(juce::Slider::LinearHorizontal);
     _dramaSlider.setTextBoxStyle(juce::Slider::NoTextBox, true, 0, 0);
@@ -222,11 +232,13 @@ NextChordPanel::NextChordPanel(const std::string& identifier):
         nui::Theme::newColor(nui::Theme::ThemeColor::BACKGROUND).asJuce().withAlpha(0.5f));
 
     nui::Component::displayBackground(nui::Theme::SECONDARY_BACKGROUND, nui::Theme::getBorderRadius());
-    syncDramaLabels();
+    syncLabels();
+    syncModeButton();
 }
 
 NextChordPanel::~NextChordPanel()
 {
+    _modeButton.removeListener(this);
     _dramaSlider.removeListener(this);
 }
 
@@ -282,13 +294,49 @@ void NextChordPanel::sliderValueChanged(juce::Slider* slider)
     regenerate();
 }
 
-void NextChordPanel::syncDramaLabels()
+void NextChordPanel::syncLabels()
 {
     _title.setText(juce::translate("next_chord_panel_title").toStdString());
     _dramaLabel.setText(juce::translate("next_chord_drama_label").toStdString());
     _dramaLowLabel.setText(juce::translate("next_chord_drama_smooth").toStdString());
     _dramaHighLabel.setText(juce::translate("next_chord_drama_wild").toStdString());
     _dramaSlider.setTooltip(juce::translate("next_chord_drama_tooltip"));
+    syncModeButton();
+}
+
+void NextChordPanel::syncModeButton()
+{
+    if (_mode == SuggestionMode::Ai)
+    {
+        _modeButton.setButtonText(juce::translate("next_chord_mode_ai").toStdString());
+        _modeButton.setIsSelected(true);
+        _modeButton.setHelpText(juce::translate("next_chord_mode_ai_tooltip").toStdString());
+    }
+    else
+    {
+        _modeButton.setButtonText(juce::translate("next_chord_mode_theory").toStdString());
+        _modeButton.setIsSelected(false);
+        _modeButton.setHelpText(juce::translate("next_chord_mode_theory_tooltip").toStdString());
+    }
+}
+
+void NextChordPanel::setSuggestionMode(SuggestionMode mode)
+{
+    if (mode == SuggestionMode::Ai && !theory::NextChordAiGenerator::isAvailable())
+        mode = SuggestionMode::Theory;
+    if (mode == _mode)
+        return;
+    _mode = mode;
+    syncModeButton();
+    regenerate();
+}
+
+void NextChordPanel::onButtonClick(const std::string& componentID)
+{
+    if (componentID != "next-chord-mode")
+        return;
+
+    setSuggestionMode(_mode == SuggestionMode::Theory ? SuggestionMode::Ai : SuggestionMode::Theory);
 }
 
 void NextChordPanel::clear()
@@ -320,7 +368,21 @@ void NextChordPanel::regenerate()
     _currentLabel.setText(currentText.toStdString());
 
     const auto& keyScale = theory::ChordDatabase::getInstance().get(_key, _scale);
-    _candidates = theory::NextChordGenerator::generate(*_currentChord, keyScale, _drama01, _sequence);
+    if (_mode == SuggestionMode::Ai && theory::NextChordAiGenerator::isAvailable())
+    {
+        _candidates = theory::NextChordAiGenerator::generate(*_currentChord, keyScale, _drama01, _sequence);
+        if (_candidates.empty())
+        {
+            // Tokenisation or empty model output — fall back to theory with a hint.
+            _candidates = theory::NextChordGenerator::generate(*_currentChord, keyScale, _drama01, _sequence);
+            _currentLabel.setText(
+                (currentText + "  ·  " + juce::translate("next_chord_ai_fallback_hint")).toStdString());
+        }
+    }
+    else
+    {
+        _candidates = theory::NextChordGenerator::generate(*_currentChord, keyScale, _drama01, _sequence);
+    }
 
     rebuildList();
     _viewport.setViewPosition(0, 0);
@@ -336,7 +398,12 @@ void NextChordPanel::resized()
 {
     Component::resized();
     auto bounds = getLocalBounds().reduced(kPadding);
-    _title.setBounds(bounds.removeFromTop(18));
+
+    auto titleRow = bounds.removeFromTop(18);
+    _modeButton.setBounds(titleRow.removeFromRight(kModeButtonWidth));
+    titleRow.removeFromRight(6);
+    _title.setBounds(titleRow);
+
     bounds.removeFromTop(4);
     _currentLabel.setBounds(bounds.removeFromTop(16));
     bounds.removeFromTop(4);

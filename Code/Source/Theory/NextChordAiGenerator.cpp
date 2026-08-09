@@ -1,0 +1,132 @@
+#include "Theory/NextChordAiGenerator.h"
+
+#include <algorithm>
+#include <cmath>
+#include <set>
+
+#include "Theory/ChordSeqAIModel.h"
+#include "Theory/NextChordScorer.h"
+
+namespace theory
+{
+
+namespace
+{
+    std::set<int> pitchClassSet(const Chord& chord)
+    {
+        std::set<int> pcs;
+        for (const auto& note : chord.notes)
+            pcs.insert(note.getPitchClass());
+        return pcs;
+    }
+
+    std::optional<Degree> matchingDegree(const Chord& sonority, const KeyScaleData& keyScale)
+    {
+        const auto pcs = pitchClassSet(sonority);
+        for (const auto& degreeData : keyScale.degrees)
+        {
+            for (const auto& chord : degreeData.chords)
+            {
+                if (pitchClassSet(chord) == pcs)
+                    return degreeData.degree;
+            }
+        }
+        return std::nullopt;
+    }
+
+    std::string formatProbPercent(float p)
+    {
+        const int pct = static_cast<int>(std::lround(std::clamp(p, 0.0f, 1.0f) * 100.0f));
+        return std::to_string(pct) + "% AI";
+    }
+}
+
+bool NextChordAiGenerator::isAvailable()
+{
+    return ChordSeqAIModel::getInstance().isReady();
+}
+
+std::string NextChordAiGenerator::unavailableReason()
+{
+    const auto& model = ChordSeqAIModel::getInstance();
+    if (model.isReady())
+        return {};
+    return model.loadError().empty() ? "AI model unavailable" : model.loadError();
+}
+
+std::vector<NextChordCandidate> NextChordAiGenerator::generate(const Chord& currentChord,
+                                                               const KeyScaleData& keyScale,
+                                                               float drama01,
+                                                               const SequenceContext& sequence,
+                                                               int topK)
+{
+    auto& model = ChordSeqAIModel::getInstance();
+    if (!model.isReady() || currentChord.notes.empty())
+        return {};
+
+    // Build token sequence: previous chords (oldest→newest) then current.
+    std::vector<int> tokens;
+    tokens.reserve(static_cast<size_t>(sequence.size()) + 1);
+    for (const auto& event : sequence.previous)
+    {
+        if (auto t = model.tokenForChord(event.chord))
+            tokens.push_back(*t);
+    }
+    if (auto currentToken = model.tokenForChord(currentChord))
+        tokens.push_back(*currentToken);
+    else
+        return {}; // cannot condition without a token for the current chord
+
+    const auto predictions = model.predictTopK(tokens, topK, true);
+    if (predictions.empty())
+        return {};
+
+    std::vector<NextChordCandidate> candidates;
+    candidates.reserve(predictions.size());
+
+    for (const auto& pred : predictions)
+    {
+        auto chord = model.chordForToken(pred.token);
+        if (!chord || chord->notes.empty())
+            continue;
+        if (pitchClassSet(*chord) == pitchClassSet(currentChord)
+            && NextChordScorer::bassPitchClass(*chord) == NextChordScorer::bassPitchClass(currentChord))
+            continue;
+
+        NextChordCandidate candidate;
+        candidate.chord = std::move(*chord);
+        candidate.degree = matchingDegree(candidate.chord, keyScale);
+
+        NextChordScorer::score(currentChord, keyScale, candidate, drama01, sequence);
+
+        // ML expectedness: high probability → low surprise; boost ranking by log-prob.
+        const float p = std::clamp(pred.probability, 1.0e-6f, 1.0f);
+        const float expectedness = std::clamp(p / std::max(predictions.front().probability, 1.0e-6f), 0.0f, 1.0f);
+        candidate.metrics.surprise = std::clamp(1.0f - expectedness, 0.0f, 1.0f);
+        candidate.surprisePercent = static_cast<int>(std::lround(candidate.metrics.surprise * 100.0f));
+
+        // Blend: theory ranking + model likelihood (relative log-prob → [0,1] boost).
+        const float rel = std::log(p + 1.0e-6f) - std::log(predictions.front().probability + 1.0e-6f);
+        candidate.rankingScore += 0.55f + 0.45f * std::exp(rel);
+
+        // Label: keep theory reason when present; always show AI confidence.
+        if (candidate.reasonLabel.empty())
+            candidate.reasonLabel = formatProbPercent(pred.probability);
+        else
+            candidate.reasonLabel = formatProbPercent(pred.probability) + " · " + candidate.reasonLabel;
+
+        candidates.push_back(std::move(candidate));
+    }
+
+    std::stable_sort(candidates.begin(), candidates.end(),
+                     [](const NextChordCandidate& a, const NextChordCandidate& b)
+                     {
+                         if (std::abs(a.rankingScore - b.rankingScore) > 1.0e-5f)
+                             return a.rankingScore > b.rankingScore;
+                         return a.fitPercent > b.fitPercent;
+                     });
+
+    return candidates;
+}
+
+}

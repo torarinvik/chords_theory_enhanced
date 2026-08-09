@@ -45,11 +45,12 @@ open "build/ChordsTheory_artefacts/Debug/Standalone/Chords Theory Enhanced.app"
 | Score / rank | `NextChordScorer.h/.cpp` |
 | Sequence memory | `NextChordSequenceContext.h/.cpp` — `buildSequenceContext(MidiEditorState, …)` |
 | Pool + sort | `NextChordGenerator.h/.cpp` |
-| UI | `Component/NextChordPanel.h/.cpp` |
+| Offline AI | `ChordSeqAIModel.h/.cpp`, `NextChordAiGenerator.h/.cpp`, assets `chordseqai_*` |
+| UI | `Component/NextChordPanel.h/.cpp` (Theory/AI toggle) |
 | Wiring | `AppLayout.h/.cpp` — `setCurrentChordForSuggestions`, `refreshNextChordSequenceContext` |
 | Clear sequence | `ProgressionEditor::clearAll()` + ✕ header button |
 | Host MIDI | `Audio/HostMidiEmitter` (from earlier next-triad commit) |
-| Tests | `Tests/NextChordGeneratorTests.cpp` tag `[NextChord]` |
+| Tests | `Tests/NextChordGeneratorTests.cpp` `[NextChord]`; `ChordSeqAIModelTests.cpp` `[ChordSeqAI]` |
 | Strings | `Assets/Languages/en.lang` (`next_chord_*`, `progression_clear_tooltip`) |
 
 ### Known limits (not “perfect” yet)
@@ -57,7 +58,7 @@ open "build/ChordsTheory_artefacts/Debug/Standalone/Chords Theory Enhanced.app"
 1. **No multi-bar planning** — ranks one next chord, not a full path (though phrase memory helps).
 2. **No style profile** — drama ≠ jazz vs pop vs metal priors.
 3. **Root-position catalogue** — no inversions / bass-line model in the pool.
-4. **Rules-based, not corpus-trained** — expert heuristics, not song statistics.
+4. **Theory mode is rules-based**; **AI mode** uses offline ChordSeqAI (corpus-trained GRU). Still no multi-bar planning or style conditioning.
 5. **Chromatic drops** still freeze `ProgressionSlot` (degree may be a fallback for non-diatonic next-chords); history rebuilds from **MIDI notes + labels**, so PC sets stay correct.
 6. `MidiEditor::clear()` still does **not** fire `onContentChanged` itself; user clear goes through `ProgressionEditor::clearAll()` which notifies listeners.
 
@@ -73,6 +74,17 @@ open "build/ChordsTheory_artefacts/Debug/Standalone/Chords Theory Enhanced.app"
 ---
 
 ## [Unreleased] / recent on `work`
+
+### Offline ChordSeqAI next-chord mode
+
+- Pure C++ GRU inference (no ONNX Runtime, no network) from bundled
+  `Assets/Data/chordseqai_weights.bin` + `chordseqai_vocab.json` (MIT, ChordSeqAI).
+- `Theory/ChordSeqAIModel` + `NextChordAiGenerator` hybrid: model probability + theory Fit/Tension labels.
+- Next chords panel **Theory / AI** toggle (top-right).
+- Export script: `Scripts/export_chordseqai_assets.py`.
+- Tests: `Tests/ChordSeqAIModelTests.cpp` tag `[ChordSeqAI]`.
+- Attribution: `Assets/ThirdParty/ChordSeqAI_NOTICE.txt`.
+
 
 ### e57ee43 — `feat: sequence-aware next-chord ranking and progression clear`
 

@@ -33,9 +33,10 @@ Available as Standalone, AU, AUv3, and VST3.
 - **Session state**: key, scale, every degree's chosen voicing, and the full progression sequence
   round-trip through the plugin's own state, so closing and reopening a DAW project restores
   everything exactly as it was left.
-- **Next triads (this fork)**: from the current chord, list **all common triads** (maj/min/dim/aug)
-  ranked by tension; play-preview each row; drag into the sequencer or a DAW track; optional host
-  MIDI out for routing to another instrument track.
+- **Next chords (this fork)**: ranked suggestions from the current chord (triads, sus, power,
+  sevenths, inversions) with Fit/Tension meters and a Drama slider; sequence-aware theory ranking;
+  optional **offline AI mode** (bundled ChordSeqAI GRU — no internet, no cloud API); play-preview,
+  drag into the sequencer or a DAW track; optional host MIDI out for routing to another instrument track.
 - **Internationalization** (English, French, Spanish, German, Italian, Portuguese) and a
   light/dark theme, both inherited from the template.
 

@@ -37,7 +37,7 @@ UI, tests, and documentation written for the fork.
 This dedication **does not** apply to:
 
 - upstream Chords Theory / Nierika code and assets;
-- third-party dependencies (JUCE, Catch2, `nierika_dsp`, etc.), which keep
+- third-party dependencies (JUCE, Catch2, `nierika_dsp`, ChordSeqAI model assets, etc.), which keep
   their own licenses.
 
 CC0 1.0 summary: you may copy, modify, distribute, and use those fork
@@ -91,3 +91,8 @@ including but not limited to:
 - Catch2 — Boost Software License
 - nierika_dsp submodule — MIT (Sebastien Halbeher), with fork extensions as
   documented in that repository
+- ChordSeqAI model assets (`Assets/Data/chordseqai_*`) — MIT, derived from
+  https://github.com/PetrIvan/chord-seq-ai-app and
+  https://github.com/StudentTraineeCenter/chord-seq-ai
+  (Student Trainee Center / Petr Ivan et al.). Full notice:
+  `Assets/ThirdParty/ChordSeqAI_NOTICE.txt`
