@@ -166,31 +166,41 @@ TEST_CASE("TriadLibrary: C qualities have correct intervals", "[NextChord][Triad
     CHECK(TriadLibrary::makeTriad(0, TriadQuality::Minor7, Key::C).type == ChordType::Seventh);
 }
 
-TEST_CASE("NextChordGenerator: pool includes sevenths and inversions; drama reorders list", "[NextChord]")
+TEST_CASE("NextChordGenerator: family-level list; drama reorders by target tension", "[NextChord]")
 {
     const auto& keyScale = ChordDatabase::getInstance().get(Key::C, Scale::Major);
     const auto current = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C);
 
     const auto candidates = NextChordGenerator::generate(current, keyScale, 0.0f);
-    // After idea-level diversity (one voicing per root+quality), the list is much smaller
-    // than the raw catalogue (~371 unique voicings).
-    REQUIRE(candidates.size() >= 40);
-    REQUIRE(candidates.size() < 200);
+    // One representative per harmonic family (root + family kind) — far smaller than catalogue.
+    REQUIRE(candidates.size() >= 20);
+    REQUIRE(candidates.size() < 120);
 
     // drama=0 → best rankingScore first (higher = better match for low target tension).
     for (std::size_t i = 1; i < candidates.size(); ++i)
         CHECK(candidates[i - 1].rankingScore + 1.0e-5f >= candidates[i].rankingScore);
 
-    REQUIRE(findByPcs(candidates, { 0, 5, 7 }) != nullptr);       // Csus4
-    REQUIRE(findByPcs(candidates, { 0, 2, 7 }) != nullptr);       // Csus2
-    REQUIRE(findByPcs(candidates, { 0, 7 }) != nullptr);          // C5
-    REQUIRE(findByPcs(candidates, { 0, 4, 7, 11 }) != nullptr);   // Cmaj7
-    REQUIRE(findByPcs(candidates, { 0, 4, 7, 10 }) != nullptr);   // C7
-    REQUIRE(findByPcs(candidates, { 2, 5, 9, 0 }) != nullptr);    // Dm7
-    REQUIRE(findByPcs(candidates, { 7, 11, 2, 5 }) != nullptr);   // G7
+    // Family diversity: at most one MajorColour@C (C / Cmaj7 / C5 collapse), but Sus and Dom7 remain.
+    int majorC = 0, susC = 0, domC = 0;
+    for (const auto& c : candidates)
+    {
+        if (c.familyRootPc != 0)
+            continue;
+        if (c.familyKind == static_cast<int>(NextChordScorer::HarmonicFamilyKind::MajorColour))
+            ++majorC;
+        if (c.familyKind == static_cast<int>(NextChordScorer::HarmonicFamilyKind::Sus))
+            ++susC;
+        if (c.familyKind == static_cast<int>(NextChordScorer::HarmonicFamilyKind::Dominant))
+            ++domC;
+    }
+    CHECK(majorC <= 1);
+    CHECK(susC <= 1);
+    CHECK(domC <= 1);
 
-    // Current root-position C is excluded. Idea diversity keeps at most one C-major voicing
-    // (an inversion may remain as the single representative of that idea).
+    REQUIRE(findByPcs(candidates, { 0, 4, 7, 10 }) != nullptr); // C7 (Dominant family @ C)
+    REQUIRE(findByPcs(candidates, { 7, 11, 2, 5 }) != nullptr); // G7
+
+    // Current root-position C is excluded (same voicing as current).
     const auto findBySymbol = [&](const std::string& symbol) -> const NextChordCandidate*
     {
         for (const auto& c : candidates)
@@ -204,12 +214,6 @@ TEST_CASE("NextChordGenerator: pool includes sevenths and inversions; drama reor
     REQUIRE(am != nullptr);
     REQUIRE(am->degree.has_value());
     CHECK(*am->degree == Degree::VI);
-
-    // Csus4 appears in C major database under degree I — should get a degree label.
-    const auto* csus4 = findByPcs(candidates, { 0, 5, 7 });
-    REQUIRE(csus4 != nullptr);
-    REQUIRE(csus4->degree.has_value());
-    CHECK(*csus4->degree == Degree::I);
 
     // drama=1 → still sorted by rankingScore descending (target high tension).
     const auto wild = NextChordGenerator::generate(current, keyScale, 1.0f);
@@ -313,30 +317,39 @@ TEST_CASE("NextChordScorer: soft diatonic moves stay differentiated above zero",
     CHECK(soft.size() >= 2);
 }
 
-TEST_CASE("NextChordScorer: closer voice-leading and inversions rank as lower tension", "[NextChord]")
+TEST_CASE("NextChordScorer: tension ignores voice-leading; smoothness is separate", "[NextChord]")
 {
     const auto& keyScale = ChordDatabase::getInstance().get(Key::C, Scale::Major);
     const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C, 0);
-    const auto cOverE = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C, 1);
-    const auto cOverG = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C, 2);
+    const auto f = TriadLibrary::makeTriad(5, TriadQuality::Major, Key::C, 0);
+    const auto fOverC = TriadLibrary::makeTriad(5, TriadQuality::Major, Key::C, 2); // F/C
+    const auto fmaj7 = TriadLibrary::makeTriad(5, TriadQuality::Major7, Key::C, 0);
+    const auto fmaj7OverC = TriadLibrary::makeTriad(5, TriadQuality::Major7, Key::C, 2);
     const auto g = TriadLibrary::makeTriad(7, TriadQuality::Major, Key::C, 0);
-    const auto fs = TriadLibrary::makeTriad(6, TriadQuality::Major, Key::C, 0);
-    const auto am = TriadLibrary::makeTriad(9, TriadQuality::Minor, Key::C, 0);
     const auto gOverB = TriadLibrary::makeTriad(7, TriadQuality::Major, Key::C, 1); // G/B
+    const auto fs = TriadLibrary::makeTriad(6, TriadQuality::Major, Key::C, 0);
 
-    // Pure inversion of the same chord is softer than a remote root jump.
-    CHECK(tensionOf(c, cOverE, keyScale, Degree::I) < tensionOf(c, fs, keyScale));
-    CHECK(tensionOf(c, cOverG, keyScale, Degree::I) < tensionOf(c, fs, keyScale));
+    // Same harmonic sonority: inversion must NOT lower intrinsic/functional tension.
+    CHECK(tensionOf(c, f, keyScale, Degree::IV) == tensionOf(c, fOverC, keyScale, Degree::IV));
+    CHECK(tensionOf(c, fmaj7, keyScale, Degree::IV)
+          == tensionOf(c, fmaj7OverC, keyScale, Degree::IV));
 
-    // Same-harmony inversion is softer than a typical diatonic neighbour on common drama.
-    CHECK(tensionOf(c, cOverE, keyScale, Degree::I) < tensionOf(c, am, keyScale, Degree::VI));
+    // Fmaj7 has higher intrinsic dissonance than plain F.
+    CHECK(tensionOf(c, fmaj7, keyScale, Degree::IV) > tensionOf(c, f, keyScale, Degree::IV));
 
-    // Voice-leading: C → G/B (stepwise bass C→B, shared G) softer than C → G root position
-    // (bass leap C→G) — closer bass motion = less tension.
-    CHECK(tensionOf(c, gOverB, keyScale, Degree::V) < tensionOf(c, g, keyScale, Degree::V));
+    // Smoothness (voice-leading) is higher for G/B than root G; tension is not forced lower.
+    NextChordCandidate gCand, gOverBCand;
+    gCand.chord = g;
+    gCand.degree = Degree::V;
+    gOverBCand.chord = gOverB;
+    gOverBCand.degree = Degree::V;
+    NextChordScorer::score(c, keyScale, gCand);
+    NextChordScorer::score(c, keyScale, gOverBCand);
+    CHECK(gOverBCand.smoothnessPercent >= gCand.smoothnessPercent);
+    CHECK(gOverBCand.tensionPercent == gCand.tensionPercent);
 
-    // MIDI voice-leading cost itself is lower for inversion change than for a tritone jump.
-    CHECK(NextChordScorer::voiceLeadingCost(c, cOverE) < NextChordScorer::voiceLeadingCost(c, fs));
+    // MIDI voice-leading cost itself is still lower for inversion change than a tritone jump.
+    CHECK(NextChordScorer::voiceLeadingCost(c, fOverC) < NextChordScorer::voiceLeadingCost(c, fs));
 }
 
 TEST_CASE("NextChordScorer: Am softer than F#; diatonic primaries beat parallel minor", "[NextChord]")
@@ -438,8 +451,13 @@ TEST_CASE("NextChordScorer: drama targets tension band for ranking", "[NextChord
 
     // Smooth: G before F#.
     CHECK(calmG < calmFs);
-    // Wild: F# should not rank worse relative to G than in calm (often earlier).
-    CHECK(wildFs <= wildG + 3);
+    // Wild: remote colour should improve relative to G (gap shrinks or F# moves earlier).
+    CHECK(wildFs - wildG <= calmFs - calmG);
+    // Absolute: wild top half still includes meaningful tension (not only soft diatonics).
+    int wildTopTension = 0;
+    for (std::size_t i = 0; i < std::min<std::size_t>(8, wild.size()); ++i)
+        wildTopTension = std::max(wildTopTension, wild[i].tensionPercent);
+    CHECK(wildTopTension >= 40);
 }
 
 TEST_CASE("NextChordScorer: minor scale prefers bVII over major's vii habits", "[NextChord]")
@@ -502,8 +520,10 @@ TEST_CASE("NextChordScorer: quality fitness rewards expected diatonic colour", "
     // V wants major, not minor
     CHECK(rankingScoreOf(c, gMaj, keyScale, Degree::V) > rankingScoreOf(c, gMin, keyScale, Degree::V));
 
-    // ii wants minor, not major
-    CHECK(rankingScoreOf(c, dm, keyScale, Degree::II) > rankingScoreOf(c, dMaj, keyScale, Degree::II));
+    // ii wants minor colour. D major is better read as V/V (secondary), not "major ii" —
+    // at low drama, plain diatonic Dm should still beat bare-major D.
+    CHECK(rankingScoreOf(c, dm, keyScale, Degree::II, 0.12f)
+          > rankingScoreOf(c, dMaj, keyScale, std::nullopt, 0.12f));
 }
 
 TEST_CASE("NextChordScorer: secondary dominant and tritone sub are idiomatic colour", "[NextChord]")
@@ -721,7 +741,7 @@ TEST_CASE("buildSequenceContext: history is strictly before current, never later
     REQUIRE(pinG.size() == 2);
 }
 
-TEST_CASE("NextChordGenerator: top results are distinct harmonic ideas, not inversion floods", "[NextChord]")
+TEST_CASE("NextChordGenerator: top results are distinct harmonic families, not inversion floods", "[NextChord]")
 {
     const auto& keyScale = ChordDatabase::getInstance().get(Key::C, Scale::Major);
     const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C);
@@ -729,15 +749,173 @@ TEST_CASE("NextChordGenerator: top results are distinct harmonic ideas, not inve
 
     REQUIRE(candidates.size() >= 10);
 
-    std::set<std::pair<int, int>> ideas;
+    std::set<std::pair<int, int>> families;
+    for (std::size_t i = 0; i < std::min<std::size_t>(5, candidates.size()); ++i)
+        families.insert({ candidates[i].familyRootPc, candidates[i].familyKind });
+    // First 5 must be five different harmonic destinations.
+    CHECK(families.size() == 5);
+
+    families.clear();
     for (std::size_t i = 0; i < std::min<std::size_t>(10, candidates.size()); ++i)
+        families.insert({ candidates[i].familyRootPc, candidates[i].familyKind });
+    CHECK(families.size() >= 8);
+}
+
+TEST_CASE("NextChordGenerator: C major smooth prefers simple diatonic destinations", "[NextChord][Architecture]")
+{
+    const auto& keyScale = ChordDatabase::getInstance().get(Key::C, Scale::Major);
+    const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C);
+    const auto candidates = NextChordGenerator::generate(c, keyScale, 0.05f); // very Smooth
+    REQUIRE(candidates.size() >= 8);
+
+    // No harmonic family occupies >1 of the first 5.
+    std::set<std::pair<int, int>> top5;
+    for (std::size_t i = 0; i < 5; ++i)
+        top5.insert({ candidates[i].familyRootPc, candidates[i].familyKind });
+    CHECK(top5.size() == 5);
+
+    auto rankOfRootQuality = [&](int root, TriadQuality q) -> int
     {
-        const int root = NextChordScorer::rootPitchClass(candidates[i].chord);
-        const int q = static_cast<int>(NextChordScorer::detectTriadQuality(candidates[i].chord));
-        ideas.insert({ root, q });
+        for (std::size_t i = 0; i < candidates.size(); ++i)
+        {
+            if (NextChordScorer::rootPitchClass(candidates[i].chord) == root
+                && NextChordScorer::detectTriadQuality(candidates[i].chord) == q)
+                return static_cast<int>(i);
+        }
+        return -1;
+    };
+    auto rankOfFamily = [&](int root, NextChordScorer::HarmonicFamilyKind kind) -> int
+    {
+        for (std::size_t i = 0; i < candidates.size(); ++i)
+        {
+            if (candidates[i].familyRootPc == root
+                && candidates[i].familyKind == static_cast<int>(kind))
+                return static_cast<int>(i);
+        }
+        return -1;
+    };
+
+    // Simple F (or MajorColour@F root-position-ish) ranks in top half; not buried under slash F.
+    const int fFamily = rankOfFamily(5, NextChordScorer::HarmonicFamilyKind::MajorColour);
+    REQUIRE(fFamily >= 0);
+    CHECK(fFamily < static_cast<int>(candidates.size()) / 2);
+    // Representative should be the simple triad symbol "F", not F/C or Fmaj7/C.
+    CHECK(candidates[static_cast<std::size_t>(fFamily)].chord.symbol == "F");
+
+    const int amFamily = rankOfFamily(9, NextChordScorer::HarmonicFamilyKind::MinorColour);
+    REQUIRE(amFamily >= 0);
+    CHECK(candidates[static_cast<std::size_t>(amFamily)].chord.symbol == "Am");
+
+    // Top of Smooth should be dominated by diatonic primaries, not secondary dominants.
+    int diatonicTop = 0;
+    for (std::size_t i = 0; i < 5; ++i)
+    {
+        const auto& ch = candidates[i].chord;
+        if (NextChordScorer::isDiatonicChord(ch, keyScale)
+            && NextChordScorer::detectTriadQuality(ch) != TriadQuality::Dominant7)
+            ++diatonicTop;
     }
-    // Top 10 must not collapse to a handful of F-family inversions.
-    CHECK(ideas.size() >= 8);
+    CHECK(diatonicTop >= 3);
+
+    // Sanity ordering on absolute tension (not ranking).
+    CHECK(tensionOf(c, TriadLibrary::makeTriad(9, TriadQuality::Minor, Key::C), keyScale, Degree::VI)
+          < tensionOf(c, TriadLibrary::makeTriad(7, TriadQuality::Dominant7, Key::C), keyScale, Degree::V));
+    CHECK(tensionOf(c, TriadLibrary::makeTriad(7, TriadQuality::Major, Key::C), keyScale, Degree::V)
+          < tensionOf(c, TriadLibrary::makeTriad(7, TriadQuality::Dominant7, Key::C), keyScale, Degree::V));
+    CHECK(tensionOf(c, TriadLibrary::makeTriad(5, TriadQuality::Major, Key::C), keyScale, Degree::IV)
+          < tensionOf(c, TriadLibrary::makeTriad(5, TriadQuality::Major7, Key::C), keyScale, Degree::IV));
+
+    // Functional labels with targets.
+    NextChordCandidate a7, d7, e7;
+    a7.chord = TriadLibrary::makeTriad(9, TriadQuality::Dominant7, Key::C);
+    d7.chord = TriadLibrary::makeTriad(2, TriadQuality::Dominant7, Key::C);
+    e7.chord = TriadLibrary::makeTriad(4, TriadQuality::Dominant7, Key::C);
+    NextChordScorer::score(c, keyScale, a7);
+    NextChordScorer::score(c, keyScale, d7);
+    NextChordScorer::score(c, keyScale, e7);
+    CHECK(a7.reasonLabel.find("V/") != std::string::npos);
+    CHECK(d7.reasonLabel.find("V/") != std::string::npos);
+    CHECK(e7.reasonLabel.find("V/") != std::string::npos);
+
+    // Fit should not be a wall of 100s.
+    int fit100 = 0;
+    for (std::size_t i = 0; i < std::min<std::size_t>(12, candidates.size()); ++i)
+        if (candidates[i].fitPercent >= 100)
+            ++fit100;
+    CHECK(fit100 <= 2);
+
+    // Simple F ranks above unnecessary F/C in direct comparison.
+    CHECK(rankingScoreOf(c, TriadLibrary::makeTriad(5, TriadQuality::Major, Key::C, 0), keyScale, Degree::IV)
+          > rankingScoreOf(c, TriadLibrary::makeTriad(5, TriadQuality::Major, Key::C, 2), keyScale, Degree::IV));
+    CHECK(rankingScoreOf(c, TriadLibrary::makeTriad(9, TriadQuality::Minor, Key::C, 0), keyScale, Degree::VI)
+          > rankingScoreOf(c, TriadLibrary::makeTriad(9, TriadQuality::Minor, Key::C, 1), keyScale, Degree::VI));
+
+    (void)rankOfRootQuality;
+}
+
+TEST_CASE("NextChordGenerator: progression history changes ordering", "[NextChord][Architecture]")
+{
+    const auto& keyScale = ChordDatabase::getInstance().get(Key::C, Scale::Major);
+    const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C);
+    const auto am = TriadLibrary::makeTriad(9, TriadQuality::Minor, Key::C);
+    const auto g = TriadLibrary::makeTriad(7, TriadQuality::Major, Key::C);
+    const auto f = TriadLibrary::makeTriad(5, TriadQuality::Major, Key::C);
+    const auto d7 = TriadLibrary::makeTriad(2, TriadQuality::Dominant7, Key::C);
+    const auto a7 = TriadLibrary::makeTriad(9, TriadQuality::Dominant7, Key::C);
+
+    auto topRoots = [](const std::vector<NextChordCandidate>& list, std::size_t n) {
+        std::vector<int> roots;
+        for (std::size_t i = 0; i < std::min(n, list.size()); ++i)
+            roots.push_back(NextChordScorer::rootPitchClass(list[i].chord));
+        return roots;
+    };
+
+    const auto fromC = NextChordGenerator::generate(c, keyScale, 0.35f, {});
+    const auto fromAm = NextChordGenerator::generate(am, keyScale, 0.35f, history({ { c, Degree::I } }));
+    const auto fromG = NextChordGenerator::generate(g, keyScale, 0.35f, history({ { c, Degree::I } }));
+    const auto fromF = NextChordGenerator::generate(f, keyScale, 0.35f, history({ { c, Degree::I } }));
+    const auto fromD7 = NextChordGenerator::generate(d7, keyScale, 0.45f, history({ { c, Degree::I } }));
+    const auto fromA7 = NextChordGenerator::generate(a7, keyScale, 0.45f, history({ { c, Degree::I } }));
+
+    REQUIRE(fromC.size() >= 5);
+    REQUIRE(fromAm.size() >= 5);
+    REQUIRE(fromG.size() >= 5);
+    REQUIRE(fromD7.size() >= 5);
+    REQUIRE(fromA7.size() >= 5);
+
+    // After A7, Dm (root 2 minor family) should rank high.
+    int dmRank = 999;
+    for (std::size_t i = 0; i < fromA7.size(); ++i)
+    {
+        if (fromA7[i].familyRootPc == 2
+            && fromA7[i].familyKind == static_cast<int>(NextChordScorer::HarmonicFamilyKind::MinorColour))
+        {
+            dmRank = static_cast<int>(i);
+            break;
+        }
+    }
+    CHECK(dmRank < 6);
+
+    // After D7, G family should rank high.
+    int gRank = 999;
+    for (std::size_t i = 0; i < fromD7.size(); ++i)
+    {
+        if (fromD7[i].familyRootPc == 7)
+        {
+            gRank = static_cast<int>(i);
+            break;
+        }
+    }
+    CHECK(gRank < 6);
+
+    // Top-5 root sets should not be identical across different current chords.
+    const auto rC = topRoots(fromC, 5);
+    const auto rAm = topRoots(fromAm, 5);
+    const auto rG = topRoots(fromG, 5);
+    const auto rF = topRoots(fromF, 5);
+    CHECK_FALSE(rC == rAm);
+    CHECK_FALSE(rC == rG);
+    CHECK_FALSE(rAm == rF);
 }
 
 TEST_CASE("Mechanism + lookahead: after C, A7 context prefers Dm; D7 prefers G", "[NextChord]")

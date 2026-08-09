@@ -16,20 +16,19 @@ namespace theory
 
 // Multi-metric next-chord scoring.
 //
-// Independent axes (CandidateMetrics):
-//   coherence, tension, surprise, voiceLeading, resolution, tensionDirection
+// Independent axes (CandidateMetrics) — never merge early:
+//   coherence (Fit), tension, surprise, voiceLeading (smoothness), resolution, complexity
 //
-// drama01 is the *desired tension* T* ∈ [0,1]:
-//   rankingScore = coherence − |tension − T*| + VL/resolution terms − surprise·(1−T*)
-// Soft moves are not ranked only by "diatonic + common tones"; wild moves must still clear a
-// minimum coherence gate.
+// drama01 is the *desired tension* T* ∈ [0,1] (Smooth→Wild), not a "chromatic weight".
+// Ranking prefers high-coherence candidates near T*, with resolution potential and a
+// simplicity prior (root-position ordinary chords beat needless inversions/extensions).
 class NextChordScorer
 {
 public:
     static constexpr float kDefaultDrama = 0.35f;
-    // Minimum coherence (0–1) to appear in results; scales slightly with drama (wild allows a bit more colour).
-    static constexpr float kMinCoherenceSmooth = 0.22f;
-    static constexpr float kMinCoherenceWild = 0.14f;
+    // Minimum coherence (0–1) to appear in results; wild allows a bit more colour.
+    static constexpr float kMinCoherenceSmooth = 0.28f;
+    static constexpr float kMinCoherenceWild = 0.18f;
 
     enum class ScaleFamily { Majorish, Minorish, ModalSoft, Diminishedish };
 
@@ -41,6 +40,18 @@ public:
         Dominant,
         Modal,
         Chromatic
+    };
+
+    // Harmonic *destination* family — coarser than TriadQuality.
+    // F, Fmaj7, F5, F/C share MajorColour@F; G vs G7 are different families.
+    enum class HarmonicFamilyKind
+    {
+        MajorColour = 0, // Major, Major7, Power
+        MinorColour = 1, // Minor, Minor7
+        Dominant = 2,    // Dominant7
+        Diminished = 3,  // Dim, HalfDim7
+        Augmented = 4,
+        Sus = 5          // Sus2, Sus4
     };
 
     static void score(const Chord& currentChord, const KeyScaleData& keyScale, NextChordCandidate& candidate,
@@ -67,6 +78,12 @@ public:
     static int nonScaleToneCount(const Chord& chord, const KeyScaleData& keyScale);
     static TriadQuality detectTriadQuality(const Chord& chord);
     static ScaleFamily scaleFamily(Scale scale);
+
+    // Harmonic-family helpers (destination-first ranking).
+    static HarmonicFamilyKind familyKindForQuality(TriadQuality quality);
+    static float voicingComplexity(const Chord& chord);
+    // Map drama slider → target tension region centre in [0,1].
+    static float targetTensionFromDrama(float drama01);
 
     // Key / scale helpers (also unit-tested).
     static int keyTonicPitchClass(const KeyScaleData& keyScale);

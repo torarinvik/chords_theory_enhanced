@@ -50,10 +50,24 @@ SecondaryDominantResult analyseSecondaryDominant(const Chord& chord, const KeySc
     if (diatonicChord && isMaj)
         return out;
 
+    // Bare major as V/x is only idiomatic for strong diatonic targets (ii, iii, IV, V, vi).
+    // F# major in C is V/vii on paper — not a useful secondary label; reject bare major → VII.
+    if (isMaj && *targetDeg == Degree::VII)
+        return out;
+
+    // Prefer common secondary targets: V/ii, V/iii, V/IV, V/V, V/vi over V/vii.
+    float conf = isDom7 ? 0.9f : 0.62f;
+    if (*targetDeg == Degree::VII)
+        conf *= 0.45f; // rare / weak even as dom7
+    else if (*targetDeg == Degree::V || *targetDeg == Degree::II || *targetDeg == Degree::VI)
+        conf = std::min(1.0f, conf + 0.05f); // V/V, V/ii, V/vi are textbook
+    else if (*targetDeg == Degree::III || *targetDeg == Degree::IV)
+        conf = std::min(1.0f, conf + 0.02f);
+
     out.hit = true;
     out.targetDegree = *targetDeg;
     out.targetRootPc = resolveRoot;
-    out.confidence = isDom7 ? 0.9f : 0.62f;
+    out.confidence = conf;
     out.label = std::string("V/") + getDegreeLabel(*targetDeg);
     return out;
 }

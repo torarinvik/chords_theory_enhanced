@@ -85,6 +85,15 @@ open "build/ChordsTheory_artefacts/Debug/Standalone/Chords Theory Enhanced.app"
 - Tests: `Tests/ChordSeqAIModelTests.cpp` tag `[ChordSeqAI]`.
 - Attribution: `Assets/ThirdParty/ChordSeqAI_NOTICE.txt`.
 
+### Theory ranking: harmonic destinations before voicings
+
+- Rank **families** first (root + Major/Minor/Dominant/Dim/Aug/Sus); one representative each.
+- Simplicity prior: root-position ordinary chords beat needless inversions/extensions (F ≻ F/C).
+- Tension = unresolved-feel (intrinsic + functional); **not** voice-leading / pedal bass.
+- Fit = absolute contextual coherence (not renormalised to 100); Drama = target tension region.
+- Labels target-aware (`V/ii`, `subV/I` only with implied resolve); secondary V/vii bare-major rejected.
+- Diagnostic tests: `[NextChord][Architecture]` for C major smooth + history-sensitive ordering.
+
 
 ### e57ee43 — `feat: sequence-aware next-chord ranking and progression clear`
 

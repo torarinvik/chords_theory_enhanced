@@ -1,5 +1,7 @@
 #include "Theory/NextChordGenerator.h"
 
+#include <algorithm>
+#include <cmath>
 #include <map>
 #include <set>
 #include <tuple>
@@ -35,13 +37,23 @@ namespace
         return voicingKey(a) == voicingKey(b);
     }
 
-    using IdeaKey = std::tuple<int, int>; // rootPc, quality enum
+    // Harmonic destination family: root + coarse family kind (not every voicing/quality).
+    using FamilyKey = std::pair<int, int>;
 
-    IdeaKey ideaKey(const Chord& chord)
+    FamilyKey familyKeyOf(const NextChordCandidate& c)
     {
-        const int root = NextChordScorer::rootPitchClass(chord);
-        const auto quality = static_cast<int>(NextChordScorer::detectTriadQuality(chord));
-        return { root, quality };
+        if (c.familyRootPc >= 0 && c.familyKind >= 0)
+            return { c.familyRootPc, c.familyKind };
+        const int root = NextChordScorer::rootPitchClass(c.chord);
+        const int kind = static_cast<int>(
+            NextChordScorer::familyKindForQuality(NextChordScorer::detectTriadQuality(c.chord)));
+        return { root, kind };
+    }
+
+    // Prefer simpler ordinary representatives within a family (root position F over F/C / Fmaj7).
+    float representativeScore(const NextChordCandidate& c)
+    {
+        return c.rankingScore - 0.55f * c.metrics.complexity;
     }
 
     std::optional<Degree> matchingDegree(const Chord& sonority, const KeyScaleData& keyScale)
@@ -81,11 +93,11 @@ std::vector<NextChordCandidate> NextChordGenerator::generate(const Chord& curren
         candidates.push_back(std::move(candidate));
     };
 
-    // 1) Mechanism-driven ideas first (functionally motivated).
+    // 1) Mechanism-driven ideas (functionally motivated roots/qualities).
     for (auto& c : MechanismCandidateGenerator::generate(currentChord, keyScale, sequence))
         consider(std::move(c));
 
-    // 2) Full catalogue for coverage (still idea-deduped later).
+    // 2) Full catalogue for coverage (all inversions compete only within family later).
     for (const auto& chord : TriadLibrary::allTriads(keyScale.key))
     {
         NextChordCandidate candidate;
@@ -94,48 +106,64 @@ std::vector<NextChordCandidate> NextChordGenerator::generate(const Chord& curren
         consider(std::move(candidate));
     }
 
+    // 3) Score every voicing (five independent axes + ranking).
     NextChordScorer::scoreAndSort(currentChord, keyScale, candidates, drama01, sequence);
 
-    // 3) One-step lookahead: reward productive tension (strong available continuation).
-    constexpr float kLookaheadWeight = 0.22f;
+    // 4) One-step lookahead → resolution potential (productive tension).
+    constexpr float kLookaheadWeight = 0.30f;
     for (auto& candidate : candidates)
     {
         const float productivity = lookaheadProductivity(candidate.chord, keyScale, drama01);
+        // Blend into resolution metric (keeps axes meaningful for diagnostics).
+        candidate.metrics.resolution = std::clamp(
+            0.65f * candidate.metrics.resolution + 0.35f * productivity, 0.0f, 1.0f);
+        candidate.resolutionPercent =
+            std::clamp(static_cast<int>(std::lround(candidate.metrics.resolution * 100.0f)), 0, 100);
         candidate.rankingScore += kLookaheadWeight * productivity;
-        if (productivity > 0.55f && candidate.metrics.tension > 0.4f)
+    }
+
+    // 5) Destination-first: one representative per harmonic family.
+    //    Within family, pick best by representativeScore (ranking − complexity).
+    std::map<FamilyKey, std::size_t> bestIndexByFamily;
+    for (std::size_t i = 0; i < candidates.size(); ++i)
+    {
+        const auto key = familyKeyOf(candidates[i]);
+        const auto it = bestIndexByFamily.find(key);
+        if (it == bestIndexByFamily.end())
         {
-            // Tag productive tension lightly if reason is sparse.
-            if (candidate.reasonLabel.find("→") == std::string::npos
-                && candidate.metrics.resolution > 0.35f)
-            {
-                // Keep label clean; productivity only affects rank.
-            }
+            bestIndexByFamily.emplace(key, i);
+            continue;
+        }
+        if (representativeScore(candidates[i]) > representativeScore(candidates[it->second]) + 1.0e-5f)
+            it->second = i;
+        else if (std::abs(representativeScore(candidates[i]) - representativeScore(candidates[it->second]))
+                     <= 1.0e-5f
+                 && candidates[i].metrics.complexity < candidates[it->second].metrics.complexity)
+        {
+            it->second = i;
         }
     }
 
-    std::stable_sort(candidates.begin(), candidates.end(),
+    std::vector<NextChordCandidate> diverse;
+    diverse.reserve(bestIndexByFamily.size());
+    for (const auto& [key, index] : bestIndexByFamily)
+    {
+        (void)key;
+        diverse.push_back(std::move(candidates[index]));
+    }
+
+    // 6) Rank families by destination score (not by which inversion gamed Fit).
+    std::stable_sort(diverse.begin(), diverse.end(),
         [](const NextChordCandidate& a, const NextChordCandidate& b)
         {
             if (std::abs(a.rankingScore - b.rankingScore) > 1.0e-5f)
                 return a.rankingScore > b.rankingScore;
             if (a.fitPercent != b.fitPercent)
                 return a.fitPercent > b.fitPercent;
+            if (std::abs(a.metrics.complexity - b.metrics.complexity) > 1.0e-5f)
+                return a.metrics.complexity < b.metrics.complexity;
             return a.chord.symbol < b.chord.symbol;
         });
-
-    // 4) Diversity: one voicing per harmonic idea (root + quality).
-    std::vector<NextChordCandidate> diverse;
-    diverse.reserve(candidates.size());
-    std::map<IdeaKey, std::size_t> bestIndexByIdea;
-
-    for (std::size_t i = 0; i < candidates.size(); ++i)
-    {
-        const auto key = ideaKey(candidates[i].chord);
-        if (bestIndexByIdea.find(key) != bestIndexByIdea.end())
-            continue;
-        bestIndexByIdea.emplace(key, diverse.size());
-        diverse.push_back(std::move(candidates[i]));
-    }
 
     return diverse;
 }
