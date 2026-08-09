@@ -4,8 +4,14 @@
 #include <vector>
 
 #include "Theory/NoteConvertor.h"
+#include "Theory/NextChordScorer.h"
+#include "Theory/TriadLibrary.h"
 
 using theory::NoteConvertor;
+using theory::NextChordScorer;
+using theory::TriadLibrary;
+using theory::TriadQuality;
+using theory::Key;
 
 TEST_CASE("NoteConvertor::parsePitchClass resolves naturals, sharps, flats, and double accidentals", "[NoteConvertor]")
 {
@@ -83,4 +89,27 @@ TEST_CASE("NoteConvertor::voiceChordCloseToMiddleC produces a strictly ascending
                 CHECK(result[i] % 12 == ((pitchClasses[i] % 12) + 12) % 12);
         }
     }
+}
+
+TEST_CASE("NoteConvertor::chooseSmoothestInversion prefers smooth bass from previous chord", "[NoteConvertor]")
+{
+    const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C, 0);
+    const auto gRoot = TriadLibrary::makeTriad(7, TriadQuality::Major, Key::C, 0);
+
+    // Empty previous → leave target as-is.
+    CHECK(NoteConvertor::chooseSmoothestInversion({}, gRoot).symbol == gRoot.symbol);
+
+    // C → G: first inversion (G/B, bass B step from C) should beat root G (bass leap C→G).
+    const auto chosen = NoteConvertor::chooseSmoothestInversion(c, gRoot);
+    CHECK(NextChordScorer::bassPitchClass(chosen) == 11); // B
+    CHECK(NextChordScorer::rootPitchClass(chosen) == 7);
+    CHECK(NextChordScorer::voiceLeadingCost(c, chosen)
+          <= NextChordScorer::voiceLeadingCost(c, gRoot) + 1.0e-5f);
+
+    // C → Am: chosen inversion must not be worse than root-position voice-leading.
+    const auto am = TriadLibrary::makeTriad(9, TriadQuality::Minor, Key::C, 0);
+    const auto amChosen = NoteConvertor::chooseSmoothestInversion(c, am);
+    CHECK(NextChordScorer::rootPitchClass(amChosen) == 9);
+    CHECK(NextChordScorer::voiceLeadingCost(c, amChosen)
+          <= NextChordScorer::voiceLeadingCost(c, am) + 1.0e-5f);
 }

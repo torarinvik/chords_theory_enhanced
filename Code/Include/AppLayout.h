@@ -59,7 +59,11 @@ private:
     void previewChord(const theory::Chord& chord);
 
     // Auditions on the internal synth and emits host MIDI for DAW routing.
+    // Picks the smoothest inversion vs. the last previewed / current chord when available.
     void playChordToSynthAndHost(const theory::Chord& chord);
+
+    // Reference harmony for smooth-inversion preview (last played, else next-chord current).
+    [[nodiscard]] theory::Chord previewReferenceChord() const;
 
     // Updates the next-chord panel from a newly chosen "current" chord (and rebuilds sequence memory).
     // When pinCurrent is true, progression edits will not auto-retarget current to the last block.
@@ -127,6 +131,10 @@ private:
     // When false (default after progression edits), next-chord current tracks the last block on
     // the piano-roll. When true, the user pinned a current chord from the browser / next list.
     bool _nextChordCurrentPinned = false;
+
+    // Last auditioned harmony (actual inversion played) — next play chooses the smoothest
+    // inversion relative to this when set.
+    std::optional<theory::Chord> _lastPreviewChord;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AppLayout)
 };

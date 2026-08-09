@@ -33,9 +33,9 @@ AppLayout::AppLayout(ndsp::ParameterManager& parameterManager, PluginAudioProces
     _nextChordPanel.setKeyAndScale(_keyScaleSelector.getKey(), _keyScaleSelector.getScale());
     _nextChordPanel.setOnCandidateChosen([this](const theory::NextChordCandidate& candidate)
     {
-        // Clicking the row body makes it the new "current" chord and re-ranks from there.
-        setCurrentChordForSuggestions(candidate.chord, true);
+        // Play first (smooth inversion vs previous), then pin as the new current chord.
         playChordToSynthAndHost(candidate.chord);
+        setCurrentChordForSuggestions(candidate.chord, true);
     });
     _nextChordPanel.setOnCandidatePreview([this](const theory::NextChordCandidate& candidate)
     {
@@ -247,20 +247,38 @@ void AppLayout::onChordPreviewRequested(theory::Degree degree, const theory::Cho
 {
     juce::ignoreUnused(degree);
 
-    setCurrentChordForSuggestions(chord);
+    // Audition smoothest inversion vs previous, then update current-chord context.
     playChordToSynthAndHost(chord);
+    setCurrentChordForSuggestions(chord);
 }
 
 void AppLayout::previewChord(const theory::Chord& chord)
 {
-    _audioProcessor.getSynthEngine().previewChord(theory::NoteConvertor::voiceChordCloseToMiddleC(chord));
+    // Same smooth-inversion path as host+synth play (synth only, no host MIDI).
+    const theory::Chord reference = previewReferenceChord();
+    const theory::Chord voiced = theory::NoteConvertor::chooseSmoothestInversion(reference, chord);
+    _audioProcessor.getSynthEngine().previewChord(
+        theory::NoteConvertor::voiceChordCloseToMiddleC(voiced));
+    _lastPreviewChord = voiced;
+}
+
+theory::Chord AppLayout::previewReferenceChord() const
+{
+    if (_lastPreviewChord && !_lastPreviewChord->notes.empty())
+        return *_lastPreviewChord;
+    if (const auto& cur = _nextChordPanel.getCurrentChord(); cur && !cur->notes.empty())
+        return *cur;
+    return {};
 }
 
 void AppLayout::playChordToSynthAndHost(const theory::Chord& chord)
 {
-    const auto notes = theory::NoteConvertor::voiceChordCloseToMiddleC(chord);
+    const theory::Chord reference = previewReferenceChord();
+    const theory::Chord voiced = theory::NoteConvertor::chooseSmoothestInversion(reference, chord);
+    const auto notes = theory::NoteConvertor::voiceChordCloseToMiddleC(voiced);
     _audioProcessor.getSynthEngine().previewChord(notes);
     _audioProcessor.getHostMidiEmitter().playChord(notes, 1000);
+    _lastPreviewChord = voiced;
 }
 
 void AppLayout::setCurrentChordForSuggestions(const theory::Chord& chord, bool pinCurrent)
