@@ -1,11 +1,17 @@
 #include "Theory/NextChordGenerator.h"
 
+#include <algorithm>
+#include <cmath>
 #include <map>
+#include <numeric>
 #include <set>
 #include <tuple>
 #include <vector>
 
+#include "Theory/ChordSeqAIModel.h"
+#include "Theory/HarmonicPredicates.h"
 #include "Theory/MechanismCandidateGenerator.h"
+#include "Theory/NextChordAiGenerator.h"
 #include "Theory/NextChordScorer.h"
 #include "Theory/TriadLibrary.h"
 
@@ -35,13 +41,38 @@ namespace
         return voicingKey(a) == voicingKey(b);
     }
 
-    using IdeaKey = std::tuple<int, int>; // rootPc, quality enum
+    using FamilyKey = std::pair<int, int>;
 
-    IdeaKey ideaKey(const Chord& chord)
+    FamilyKey familyKeyOf(const NextChordCandidate& c)
     {
-        const int root = NextChordScorer::rootPitchClass(chord);
-        const auto quality = static_cast<int>(NextChordScorer::detectTriadQuality(chord));
-        return { root, quality };
+        if (c.familyRootPc >= 0 && c.familyKind >= 0)
+            return { c.familyRootPc, c.familyKind };
+        const int root = NextChordScorer::rootPitchClass(c.chord);
+        const int kind = static_cast<int>(
+            NextChordScorer::familyKindForQuality(NextChordScorer::detectTriadQuality(c.chord)));
+        return { root, kind };
+    }
+
+    float representativeScore(const NextChordCandidate& c)
+    {
+        // Prefer full triads as the face of an idea; power/sus lose hard.
+        return c.rankingScore
+            - 0.55f * c.metrics.complexity
+            + NextChordScorer::ideaRepresentativeBonus(c.chord);
+    }
+
+    bool isMainListIdea(const NextChordCandidate& c, const Chord& current)
+    {
+        const auto q = NextChordScorer::detectTriadQuality(c.chord);
+        // Incomplete sonorities only appear as variants, never as independent top ideas.
+        if (NextChordScorer::isIncompleteSonority(q))
+            return false;
+        // Same root as current: tonic recolour/prolong (Cmaj7, C5, Csus) is not a move.
+        // Exception: C7 is a distinct Dominant idea (V/IV / blues), not mere prolongation.
+        if (NextChordScorer::isProlongationOf(c.chord, current)
+            && q != TriadQuality::Dominant7)
+            return false;
+        return true;
     }
 
     std::optional<Degree> matchingDegree(const Chord& sonority, const KeyScaleData& keyScale)
@@ -56,6 +87,84 @@ namespace
             }
         }
         return std::nullopt;
+    }
+
+    // Map AI model probability → expectedness for a pitch-class set (and bass when available).
+    std::map<std::set<int>, float> buildAiExpectednessMap(const Chord& currentChord,
+                                                          const KeyScaleData& keyScale,
+                                                          const SequenceContext& sequence)
+    {
+        std::map<std::set<int>, float> out;
+        if (!NextChordAiGenerator::isAvailable())
+            return out;
+
+        auto& model = ChordSeqAIModel::getInstance();
+        std::vector<int> tokens;
+        tokens.reserve(static_cast<size_t>(sequence.size()) + 1);
+        for (const auto& event : sequence.previous)
+        {
+            if (auto t = model.tokenForChord(event.chord))
+                tokens.push_back(*t);
+        }
+        if (auto currentToken = model.tokenForChord(currentChord))
+            tokens.push_back(*currentToken);
+        else
+            return out;
+
+        const auto predictions = model.predictTopK(tokens, 32, true);
+        float maxP = 1.0e-6f;
+        for (const auto& pred : predictions)
+            maxP = std::max(maxP, pred.probability);
+
+        for (const auto& pred : predictions)
+        {
+            auto chord = model.chordForToken(pred.token);
+            if (!chord || chord->notes.empty())
+                continue;
+            Chord spelled = NextChordScorer::spellInKeyContext(*chord, keyScale);
+            if (spelled.notes.empty())
+                spelled = *chord;
+            const float rel = std::clamp(pred.probability / maxP, 0.0f, 1.0f);
+            const auto pcs = pitchClassSet(spelled);
+            out[pcs] = std::max(out[pcs], rel);
+        }
+        return out;
+    }
+
+    // 2-step path value: best immediate continuation productivity × coherence of that path.
+    float computePathValue(const Chord& fromCandidate, const KeyScaleData& keyScale, float drama01)
+    {
+        const float oneStep = lookaheadProductivity(fromCandidate, keyScale, drama01);
+        // Light 2-step: take top productivity target and measure its own productivity.
+        const int tonic = NextChordScorer::keyTonicPitchClass(keyScale);
+        const auto spell = keyScale.key;
+        std::vector<Chord> pool;
+        pool.push_back(TriadLibrary::makeTriad(tonic, TriadQuality::Major, spell, 0));
+        pool.push_back(TriadLibrary::makeTriad(tonic, TriadQuality::Minor, spell, 0));
+        for (const auto& note : keyScale.scaleNotes)
+        {
+            const int pc = note.getPitchClass();
+            pool.push_back(TriadLibrary::makeTriad(pc, TriadQuality::Major, spell, 0));
+            pool.push_back(TriadLibrary::makeTriad(pc, TriadQuality::Minor, spell, 0));
+        }
+        if (const auto sec = analyseSecondaryDominant(fromCandidate, keyScale); sec.hit)
+            pool.push_back(TriadLibrary::makeTriad(sec.targetRootPc, TriadQuality::Minor, spell, 0));
+
+        float bestTwo = 0.0f;
+        for (const auto& mid : pool)
+        {
+            if (mid.notes.empty())
+                continue;
+            NextChordCandidate probe;
+            probe.chord = mid;
+            NextChordScorer::score(fromCandidate, keyScale, probe, drama01, {});
+            if (probe.metrics.coherence < 0.35f)
+                continue;
+            const float next = lookaheadProductivity(mid, keyScale, drama01);
+            bestTwo = std::max(bestTwo, 0.55f * probe.metrics.coherence + 0.45f * next);
+        }
+
+        return std::clamp(0.55f * oneStep + 0.45f * bestTwo, 0.0f, 1.0f);
     }
 }
 
@@ -81,11 +190,11 @@ std::vector<NextChordCandidate> NextChordGenerator::generate(const Chord& curren
         candidates.push_back(std::move(candidate));
     };
 
-    // 1) Mechanism-driven ideas first (functionally motivated).
+    // 1) Mechanism-driven ideas.
     for (auto& c : MechanismCandidateGenerator::generate(currentChord, keyScale, sequence))
         consider(std::move(c));
 
-    // 2) Full catalogue for coverage (still idea-deduped later).
+    // 2) Full catalogue for coverage.
     for (const auto& chord : TriadLibrary::allTriads(keyScale.key))
     {
         NextChordCandidate candidate;
@@ -94,48 +203,116 @@ std::vector<NextChordCandidate> NextChordGenerator::generate(const Chord& curren
         consider(std::move(candidate));
     }
 
+    // 3) Score every voicing (metrics + provisional ranking).
     NextChordScorer::scoreAndSort(currentChord, keyScale, candidates, drama01, sequence);
 
-    // 3) One-step lookahead: reward productive tension (strong available continuation).
-    constexpr float kLookaheadWeight = 0.22f;
-    for (auto& candidate : candidates)
+    // 4) Ensemble: AI expectedness + path value (top provisional only), re-finalize ranking.
+    const auto aiMap = buildAiExpectednessMap(currentChord, keyScale, sequence);
+    const float currentStanding = NextChordScorer::standingTension(currentChord, keyScale);
+
+    // Path search is expensive — only enrich the strongest provisional candidates.
+    std::vector<std::size_t> order(candidates.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::partial_sort(order.begin(),
+                      order.begin() + static_cast<std::ptrdiff_t>(std::min<std::size_t>(48, order.size())),
+                      order.end(),
+                      [&](std::size_t a, std::size_t b) {
+                          return candidates[a].rankingScore > candidates[b].rankingScore;
+                      });
+    std::set<std::size_t> pathEnrich;
+    for (std::size_t i = 0; i < std::min<std::size_t>(48, order.size()); ++i)
+        pathEnrich.insert(order[i]);
+
+    const int currentRoot = NextChordScorer::rootPitchClass(currentChord);
+
+    for (std::size_t i = 0; i < candidates.size(); ++i)
     {
-        const float productivity = lookaheadProductivity(candidate.chord, keyScale, drama01);
-        candidate.rankingScore += kLookaheadWeight * productivity;
-        if (productivity > 0.55f && candidate.metrics.tension > 0.4f)
+        auto& candidate = candidates[i];
+
+        // Contextual spelling (Bb not A# as bVII in C major).
+        candidate.chord = NextChordScorer::spellInKeyContext(candidate.chord, keyScale);
+
+        // Re-assign idea family (power → diatonic triad family).
+        NextChordScorer::assignIdeaFamily(candidate.chord, keyScale, currentRoot,
+                                          candidate.familyRootPc, candidate.familyKind);
+
+        const auto pcs = pitchClassSet(candidate.chord);
+        if (const auto it = aiMap.find(pcs); it != aiMap.end())
+            candidate.metrics.aiExpectedness = it->second;
+        else
+            candidate.metrics.aiExpectedness = 0.0f;
+
+        if (pathEnrich.contains(i))
+            candidate.metrics.pathValue = computePathValue(candidate.chord, keyScale, drama01);
+        else
+            candidate.metrics.pathValue = std::clamp(candidate.metrics.resolution * 0.7f, 0.0f, 1.0f);
+
+        candidate.metrics.resolution = std::clamp(
+            0.60f * candidate.metrics.resolution + 0.40f * candidate.metrics.pathValue, 0.0f, 1.0f);
+        candidate.resolutionPercent =
+            std::clamp(static_cast<int>(std::lround(candidate.metrics.resolution * 100.0f)), 0, 100);
+
+        // Prolongations of the current root: heavy demotion (recolour, not a move).
+        if (NextChordScorer::isProlongationOf(candidate.chord, currentChord))
+            candidate.rankingScore -= 1.75f;
+
+        // Incomplete sonorities as independent scores: demote hard before family pick.
+        if (NextChordScorer::isIncompleteSonority(NextChordScorer::detectTriadQuality(candidate.chord)))
+            candidate.rankingScore -= 1.25f;
+
+        NextChordScorer::finalizeRanking(candidate, drama01, currentStanding);
+
+        if (NextChordScorer::isProlongationOf(candidate.chord, currentChord))
+            candidate.rankingScore -= 1.50f;
+        if (NextChordScorer::isIncompleteSonority(NextChordScorer::detectTriadQuality(candidate.chord)))
+            candidate.rankingScore -= 1.10f;
+    }
+
+    // 5) Destination-first: one representative per harmonic *idea* family.
+    //    Only complete-move candidates compete (no C5/Csus2/A5 as top-level faces).
+    std::map<FamilyKey, std::size_t> bestIndexByFamily;
+    for (std::size_t i = 0; i < candidates.size(); ++i)
+    {
+        if (!isMainListIdea(candidates[i], currentChord))
+            continue;
+
+        const auto key = familyKeyOf(candidates[i]);
+        const auto it = bestIndexByFamily.find(key);
+        if (it == bestIndexByFamily.end())
         {
-            // Tag productive tension lightly if reason is sparse.
-            if (candidate.reasonLabel.find("→") == std::string::npos
-                && candidate.metrics.resolution > 0.35f)
-            {
-                // Keep label clean; productivity only affects rank.
-            }
+            bestIndexByFamily.emplace(key, i);
+            continue;
+        }
+        if (representativeScore(candidates[i]) > representativeScore(candidates[it->second]) + 1.0e-5f)
+            it->second = i;
+        else if (std::abs(representativeScore(candidates[i]) - representativeScore(candidates[it->second]))
+                     <= 1.0e-5f
+                 && candidates[i].metrics.complexity < candidates[it->second].metrics.complexity)
+        {
+            it->second = i;
         }
     }
 
-    std::stable_sort(candidates.begin(), candidates.end(),
+    std::vector<NextChordCandidate> diverse;
+    diverse.reserve(bestIndexByFamily.size());
+    for (const auto& [key, index] : bestIndexByFamily)
+    {
+        (void)key;
+        diverse.push_back(std::move(candidates[index]));
+    }
+
+    // 6) Final destination order (moves only).
+    std::stable_sort(diverse.begin(), diverse.end(),
         [](const NextChordCandidate& a, const NextChordCandidate& b)
         {
             if (std::abs(a.rankingScore - b.rankingScore) > 1.0e-5f)
                 return a.rankingScore > b.rankingScore;
             if (a.fitPercent != b.fitPercent)
                 return a.fitPercent > b.fitPercent;
+            if (std::abs(a.metrics.complexity - b.metrics.complexity) > 1.0e-5f)
+                return a.metrics.complexity < b.metrics.complexity;
             return a.chord.symbol < b.chord.symbol;
         });
-
-    // 4) Diversity: one voicing per harmonic idea (root + quality).
-    std::vector<NextChordCandidate> diverse;
-    diverse.reserve(candidates.size());
-    std::map<IdeaKey, std::size_t> bestIndexByIdea;
-
-    for (std::size_t i = 0; i < candidates.size(); ++i)
-    {
-        const auto key = ideaKey(candidates[i].chord);
-        if (bestIndexByIdea.find(key) != bestIndexByIdea.end())
-            continue;
-        bestIndexByIdea.emplace(key, diverse.size());
-        diverse.push_back(std::move(candidates[i]));
-    }
 
     return diverse;
 }

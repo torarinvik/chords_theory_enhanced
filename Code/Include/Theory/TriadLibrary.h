@@ -41,8 +41,9 @@ public:
 
     // inversion: 0 = root position, 1 = first inversion (3rd/next chord-tone in bass), …
     // Clamped to [0, toneCount-1]. Notes are always bass-first (matches chords.json inversions).
+    // preferFlats: when true, spell roots like Bb/Eb even in C/G/D keys (modal mixture).
     static Chord makeTriad(int rootPitchClass, TriadQuality quality, Key rootSpellKey = Key::C,
-                           int inversion = 0);
+                           int inversion = 0, bool preferFlats = false);
 
     // Number of distinct bass placements for this quality (tone count).
     static int inversionCount(TriadQuality quality);

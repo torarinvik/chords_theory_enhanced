@@ -85,6 +85,31 @@ open "build/ChordsTheory_artefacts/Debug/Standalone/Chords Theory Enhanced.app"
 - Tests: `Tests/ChordSeqAIModelTests.cpp` tag `[ChordSeqAI]`.
 - Attribution: `Assets/ThirdParty/ChordSeqAI_NOTICE.txt`.
 
+### Theory ranking: harmonic destinations before voicings
+
+- Rank **families** first (root + Major/Minor/Dominant/Dim/Aug/Sus); one representative each.
+- Simplicity prior: root-position ordinary chords beat needless inversions/extensions (F ≻ F/C).
+- Tension = unresolved-feel (intrinsic + functional); **not** voice-leading / pedal bass.
+- Fit = absolute contextual coherence (not renormalised to 100); Drama = target tension region.
+- Labels target-aware (`V/ii`, `subV/I` only with implied resolve); secondary V/vii bare-major rejected.
+- Diagnostic tests: `[NextChord][Architecture]` for C major smooth + history-sensitive ordering.
+
+### Final ranker: Drama controls order (ensemble + curves)
+
+- Soft **tension/surprise preference curves** (not hard targets); high-T secondaries crushed at Smooth.
+- **Trajectory** (release/maintain/build) from standing tension; **productive tension** = T×res×fit.
+- **Path value** (lookahead) + **AI expectedness** blended into theory final score (ensemble).
+- Quality-aware romans (`ii`, `V/ii`); AI spellings via key (`Bb` not `A#` in C major).
+- Metrics on candidate: coherence, tension, surprise, pathValue, aiExpectedness, tensionMatch, …
+
+### Incomplete-chord gaming fix
+
+- Main list = **harmonic moves only**: power/sus are not independent ideas; fold into triad families.
+- **Prolong/recolour** of current root (C5, Csus2, Cmaj7) excluded from top moves (C7 kept as V/IV).
+- Tension-match **capped**; coherence dominates so Bb cannot beat Dm on T20 vs T25 alone.
+- C→F no longer labelled “resolve” (predominant departure); only true V/subV resolutions say resolve.
+- Contextual flats for mixture roots (`Bb`); incomplete sonorities avoid false `vi`/`ii` romans.
+
 
 ### e57ee43 — `feat: sequence-aware next-chord ranking and progression clear`
 

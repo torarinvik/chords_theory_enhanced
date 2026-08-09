@@ -11,10 +11,12 @@
 namespace theory
 {
 
-// Builds next-chord candidates from the algorithmic catalogue (triads, sus, power, sevenths —
-// each inversion kept as its own voicing), deduped by bass + pitch-class set, ranked by
-// NextChordScorer (optionally with sequence memory). Closer voice-leading / bass motion ranks
-// as lower tension.
+// Builds next-chord candidates in two stages:
+//   1) Rank harmonic *destinations* (families: root + family kind)
+//   2) Choose one simple representative voicing per family (simplicity prior)
+//
+// Inversions, sevenths-as-colour of a triad family, and power/incomplete forms do not
+// flood the main list — they compete only within their family for the representative slot.
 class NextChordGenerator
 {
 public:

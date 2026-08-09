@@ -50,11 +50,62 @@ SecondaryDominantResult analyseSecondaryDominant(const Chord& chord, const KeySc
     if (diatonicChord && isMaj)
         return out;
 
+    // Bare major as V/x is only idiomatic for strong diatonic targets (ii, iii, IV, V, vi).
+    // F# major in C is V/vii on paper — not a useful secondary label; reject bare major → VII.
+    if (isMaj && *targetDeg == Degree::VII)
+        return out;
+
+    // Prefer common secondary targets: V/ii, V/iii, V/IV, V/V, V/vi over V/vii.
+    float conf = isDom7 ? 0.9f : 0.62f;
+    if (*targetDeg == Degree::VII)
+        conf *= 0.45f; // rare / weak even as dom7
+    else if (*targetDeg == Degree::V || *targetDeg == Degree::II || *targetDeg == Degree::VI)
+        conf = std::min(1.0f, conf + 0.05f); // V/V, V/ii, V/vi are textbook
+    else if (*targetDeg == Degree::III || *targetDeg == Degree::IV)
+        conf = std::min(1.0f, conf + 0.02f);
+
     out.hit = true;
     out.targetDegree = *targetDeg;
     out.targetRootPc = resolveRoot;
-    out.confidence = isDom7 ? 0.9f : 0.62f;
-    out.label = std::string("V/") + getDegreeLabel(*targetDeg);
+    out.confidence = conf;
+    // Quality-aware target: V/ii not V/II (case encodes expected target quality).
+    const auto family = NextChordScorer::scaleFamily(keyScale.scale);
+    RomanQualityHint targetHint = RomanQualityHint::MinorLike;
+    if (family == NextChordScorer::ScaleFamily::Majorish
+        || family == NextChordScorer::ScaleFamily::ModalSoft)
+    {
+        switch (*targetDeg)
+        {
+            case Degree::I: case Degree::IV: case Degree::V:
+                targetHint = RomanQualityHint::MajorLike;
+                break;
+            case Degree::II: case Degree::III: case Degree::VI:
+                targetHint = RomanQualityHint::MinorLike;
+                break;
+            case Degree::VII:
+                targetHint = RomanQualityHint::DimLike;
+                break;
+        }
+    }
+    else if (family == NextChordScorer::ScaleFamily::Minorish)
+    {
+        switch (*targetDeg)
+        {
+            case Degree::I: case Degree::IV:
+                targetHint = RomanQualityHint::MinorLike;
+                break;
+            case Degree::II:
+                targetHint = RomanQualityHint::DimLike;
+                break;
+            case Degree::V:
+                targetHint = RomanQualityHint::MajorLike; // often major V in minor
+                break;
+            case Degree::III: case Degree::VI: case Degree::VII:
+                targetHint = RomanQualityHint::MajorLike;
+                break;
+        }
+    }
+    out.label = std::string("V/") + formatRomanNumeral(*targetDeg, targetHint);
     return out;
 }
 
@@ -78,7 +129,7 @@ TritoneSubResult analyseTritoneSubstitution(const Chord& chord, const KeyScaleDa
         out.confidence = 0.92f;
         out.resolveRootPc = tonic;
         out.resolveDegree = Degree::I;
-        out.label = "subV/I";
+        out.label = "subV/I"; // I is major-like tonic in major; keep uppercase
         return out;
     }
 
@@ -97,7 +148,17 @@ TritoneSubResult analyseTritoneSubstitution(const Chord& chord, const KeyScaleDa
         out.confidence = 0.78f;
         out.resolveRootPc = degRoot;
         out.resolveDegree = deg;
-        out.label = deg ? (std::string("subV/") + getDegreeLabel(*deg)) : "subV";
+        if (deg)
+        {
+            RomanQualityHint hint = RomanQualityHint::MajorLike;
+            if (*deg == Degree::II || *deg == Degree::III || *deg == Degree::VI)
+                hint = RomanQualityHint::MinorLike;
+            else if (*deg == Degree::VII)
+                hint = RomanQualityHint::DimLike;
+            out.label = std::string("subV/") + formatRomanNumeral(*deg, hint);
+        }
+        else
+            out.label = "subV";
         return out;
     }
 
