@@ -70,8 +70,9 @@ clone with `--recurse-submodules` or run `git submodule update --init --recursiv
   isolation).
 - `ChordSeqAIModel`/`NextChordAiGenerator` — offline ChordSeqAI recurrent GRU (bundled
   `chordseqai_weights.bin` + vocab JSON, pure C++ inference, no network). Maps sequence tokens
-  → top-K chords; hybrid ranking with `NextChordScorer` for Fit/Tension labels. UI toggle on
-  `NextChordPanel` (Theory / AI). MIT assets: see `Assets/ThirdParty/ChordSeqAI_NOTICE.txt`.
+  → top-K chords ranked by model probability only (no symbolic blend). `NextChordPanel` shows
+  dual columns: Theory (rule-based + Drama/Fit/Tension) left, pure AI right. MIT assets: see
+  `Assets/ThirdParty/ChordSeqAI_NOTICE.txt`.
 - `MidiEditorState`/`SessionState`/`SessionStateSerializer` — pure data + `juce::ValueTree`
   (de)serialization for everything a session needs to survive a DAW project close/reopen: Key,
   Scale, the chosen chord per degree, and `MidiEditorState` (a pure-data mirror of `MidiEditor`'s

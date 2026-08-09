@@ -56,7 +56,6 @@ std::string NextChordAiGenerator::unavailableReason()
 
 std::vector<NextChordCandidate> NextChordAiGenerator::generate(const Chord& currentChord,
                                                                const KeyScaleData& keyScale,
-                                                               float drama01,
                                                                const SequenceContext& sequence,
                                                                int topK)
 {
@@ -97,33 +96,23 @@ std::vector<NextChordCandidate> NextChordAiGenerator::generate(const Chord& curr
         candidate.chord = std::move(*chord);
         candidate.degree = matchingDegree(candidate.chord, keyScale);
 
-        NextChordScorer::score(currentChord, keyScale, candidate, drama01, sequence);
-
-        // ML expectedness: high probability → low surprise; boost ranking by log-prob.
-        const float p = std::clamp(pred.probability, 1.0e-6f, 1.0f);
-        const float expectedness = std::clamp(p / std::max(predictions.front().probability, 1.0e-6f), 0.0f, 1.0f);
-        candidate.metrics.surprise = std::clamp(1.0f - expectedness, 0.0f, 1.0f);
+        // Pure model ranking — probability only (no theory scorer blend).
+        const float p = std::clamp(pred.probability, 0.0f, 1.0f);
+        candidate.rankingScore = p;
+        candidate.fitPercent = static_cast<int>(std::lround(p * 100.0f));
+        candidate.tensionPercent = 0;
+        candidate.metrics.surprise = std::clamp(1.0f - p, 0.0f, 1.0f);
         candidate.surprisePercent = static_cast<int>(std::lround(candidate.metrics.surprise * 100.0f));
-
-        // Blend: theory ranking + model likelihood (relative log-prob → [0,1] boost).
-        const float rel = std::log(p + 1.0e-6f) - std::log(predictions.front().probability + 1.0e-6f);
-        candidate.rankingScore += 0.55f + 0.45f * std::exp(rel);
-
-        // Label: keep theory reason when present; always show AI confidence.
-        if (candidate.reasonLabel.empty())
-            candidate.reasonLabel = formatProbPercent(pred.probability);
-        else
-            candidate.reasonLabel = formatProbPercent(pred.probability) + " · " + candidate.reasonLabel;
+        candidate.reasonLabel = formatProbPercent(p);
 
         candidates.push_back(std::move(candidate));
     }
 
+    // Stable sort by model probability (already near-sorted from predictTopK).
     std::stable_sort(candidates.begin(), candidates.end(),
                      [](const NextChordCandidate& a, const NextChordCandidate& b)
                      {
-                         if (std::abs(a.rankingScore - b.rankingScore) > 1.0e-5f)
-                             return a.rankingScore > b.rankingScore;
-                         return a.fitPercent > b.fitPercent;
+                         return a.rankingScore > b.rankingScore;
                      });
 
     return candidates;

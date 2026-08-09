@@ -16,19 +16,15 @@
 namespace component
 {
 
-// Ranked, scrollable list of next-chord suggestions (triads, sus, power, sevenths).
-// Drama slider morphs ranking from smooth/expected (0) to remote/colourful (1).
-// Mode toggle: Theory (rule-based) vs AI (offline ChordSeqAI GRU, hybrid labels).
-// Each row has:
-//  - a play button (preview only — does not change "current")
-//  - drag-to-sequencer / DAW (same temp-.mid mechanism as ChordCard)
-//  - click on the rest of the row to make it the new current chord
+// Dual-column next-chord suggestions:
+//  - Left: rule-based ranking (play, Fit/Tension, Drama slider)
+//  - Right: pure offline ChordSeqAI suggestions (no hybrid with theory)
+// Each row supports play-preview, drag-to-sequencer/DAW, and click-to-set-current.
 class NextChordPanel : public nui::Component,
-                       private juce::Slider::Listener,
-                       public nelement::TextButton::OnClickListener
+                       private juce::Slider::Listener
 {
 public:
-    enum class SuggestionMode
+    enum class Column
     {
         Theory,
         Ai
@@ -56,24 +52,28 @@ public:
     [[nodiscard]] float getDrama01() const { return _drama01; }
     [[nodiscard]] const theory::SequenceContext& getSequenceContext() const { return _sequence; }
 
-    void setSuggestionMode(SuggestionMode mode);
-    [[nodiscard]] SuggestionMode getSuggestionMode() const { return _mode; }
-
     void setOnCandidateChosen(OnCandidateChosen callback) { _onCandidateChosen = std::move(callback); }
     void setOnCandidatePreview(OnCandidatePreview callback) { _onCandidatePreview = std::move(callback); }
     void setOnCandidateDragStarted(OnCandidateDragStarted callback) { _onCandidateDragStarted = std::move(callback); }
 
-    [[nodiscard]] const std::vector<theory::NextChordCandidate>& getCandidates() const { return _candidates; }
+    // Left column (symbolic ranking).
+    [[nodiscard]] const std::vector<theory::NextChordCandidate>& getCandidates() const { return _theoryCandidates; }
+    [[nodiscard]] const std::vector<theory::NextChordCandidate>& getTheoryCandidates() const { return _theoryCandidates; }
+    // Right column (pure AI ranking).
+    [[nodiscard]] const std::vector<theory::NextChordCandidate>& getAiCandidates() const { return _aiCandidates; }
     [[nodiscard]] const std::optional<theory::Chord>& getCurrentChord() const { return _currentChord; }
-
-    void onButtonClick(const std::string& componentID) override;
 
 private:
     void sliderValueChanged(juce::Slider* slider) override;
+
     class Row : public nui::Component, public nelement::SVGButton::OnClickListener
     {
     public:
-        Row(const std::string& identifier, NextChordPanel& owner, theory::NextChordCandidate candidate, int rowIndex);
+        Row(const std::string& identifier,
+            NextChordPanel& owner,
+            theory::NextChordCandidate candidate,
+            int rowIndex,
+            Column column);
         ~Row() override;
 
         void paint(juce::Graphics& g) override;
@@ -89,6 +89,7 @@ private:
         NextChordPanel& _owner;
         theory::NextChordCandidate _candidate;
         int _rowIndex = 0;
+        Column _column = Column::Theory;
         bool _dragGestureStarted = false;
         bool _mouseDownOnPlay = false;
 
@@ -100,47 +101,52 @@ private:
     class ListContent : public juce::Component
     {
     public:
-        explicit ListContent(NextChordPanel& owner);
+        ListContent(NextChordPanel& owner, Column column);
         void resized() override;
-        void rebuildRows();
+        void rebuildRows(const std::vector<theory::NextChordCandidate>& candidates);
 
     private:
         NextChordPanel& _owner;
+        Column _column;
         std::vector<std::unique_ptr<Row>> _rows;
     };
 
     void regenerate();
-    void rebuildList();
+    void rebuildLists();
     void syncLabels();
-    void syncModeButton();
 
     theory::Key _key = theory::Key::C;
     theory::Scale _scale = theory::Scale::Major;
     std::optional<theory::Chord> _currentChord;
     theory::SequenceContext _sequence;
-    std::vector<theory::NextChordCandidate> _candidates;
+    std::vector<theory::NextChordCandidate> _theoryCandidates;
+    std::vector<theory::NextChordCandidate> _aiCandidates;
     float _drama01 = 0.35f;
-    SuggestionMode _mode = SuggestionMode::Theory;
 
     OnCandidateChosen _onCandidateChosen;
     OnCandidatePreview _onCandidatePreview;
     OnCandidateDragStarted _onCandidateDragStarted;
 
     nelement::Text _title { "next-chord-title", "", "Next chords" };
-    nelement::TextButton _modeButton { "next-chord-mode", "Theory" };
     nelement::Text _currentLabel { "next-chord-current", "", "" };
     nelement::Text _dramaLabel { "next-chord-drama-label", "", "Drama" };
     nelement::Text _dramaLowLabel { "next-chord-drama-low", "", "Smooth" };
     nelement::Text _dramaHighLabel { "next-chord-drama-high", "", "Wild" };
     juce::Slider _dramaSlider;
-    juce::Viewport _viewport;
-    ListContent _listContent { *this };
+    nelement::Text _theoryColumnLabel { "next-chord-theory-col", "", "Theory" };
+    nelement::Text _aiColumnLabel { "next-chord-ai-col", "", "AI" };
+    nelement::Text _aiEmptyHint { "next-chord-ai-empty", "", "" };
+    juce::Viewport _theoryViewport;
+    juce::Viewport _aiViewport;
+    ListContent _theoryListContent { *this, Column::Theory };
+    ListContent _aiListContent { *this, Column::Ai };
 
     static constexpr int kRowHeight = 30;
     static constexpr int kPadding = 8;
     static constexpr int kScrollbarThickness = 8;
     static constexpr int kDramaRowHeight = 22;
-    static constexpr int kModeButtonWidth = 56;
+    static constexpr int kColumnHeaderHeight = 16;
+    static constexpr int kColumnGap = 8;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(NextChordPanel)
 };
