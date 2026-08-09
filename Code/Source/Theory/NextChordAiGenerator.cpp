@@ -6,6 +6,7 @@
 
 #include "Theory/ChordSeqAIModel.h"
 #include "Theory/NextChordScorer.h"
+#include "Theory/TriadLibrary.h"
 
 namespace theory
 {
@@ -88,6 +89,10 @@ std::vector<NextChordCandidate> NextChordAiGenerator::generate(const Chord& curr
         auto chord = model.chordForToken(pred.token);
         if (!chord || chord->notes.empty())
             continue;
+
+        // Contextual spelling via theory layer (A# → Bb as bVII in C major, etc.).
+        *chord = NextChordScorer::spellInKeyContext(*chord, keyScale);
+
         if (pitchClassSet(*chord) == pitchClassSet(currentChord)
             && NextChordScorer::bassPitchClass(*chord) == NextChordScorer::bassPitchClass(currentChord))
             continue;
@@ -101,6 +106,7 @@ std::vector<NextChordCandidate> NextChordAiGenerator::generate(const Chord& curr
         candidate.rankingScore = p;
         candidate.fitPercent = static_cast<int>(std::lround(p * 100.0f));
         candidate.tensionPercent = 0;
+        candidate.metrics.aiExpectedness = p;
         candidate.metrics.surprise = std::clamp(1.0f - p, 0.0f, 1.0f);
         candidate.surprisePercent = static_cast<int>(std::lround(candidate.metrics.surprise * 100.0f));
         candidate.reasonLabel = formatProbPercent(p);

@@ -81,9 +81,32 @@ public:
 
     // Harmonic-family helpers (destination-first ranking).
     static HarmonicFamilyKind familyKindForQuality(TriadQuality quality);
+    // Idea-level family: maps power chords to contextual triad families; sus stays Sus.
+    // Returns {rootPc, kind}. For same-root prolongations, kind may still be set — use isProlongation.
+    static void assignIdeaFamily(const Chord& chord, const KeyScaleData& keyScale,
+                                 int currentRootPc, int& outRootPc, int& outKind);
+    // Incomplete / ambiguous sonorities (power, bare sus) — not independent top-level ideas.
+    static bool isIncompleteSonority(TriadQuality quality);
+    // Same harmonic root as current: recolour/prolong, not a new destination.
+    static bool isProlongationOf(const Chord& candidate, const Chord& current);
+    // Prefer full triad/dom7 over power/sus as family representative.
+    static float ideaRepresentativeBonus(const Chord& chord);
+    // Contextual enharmonic spelling for display (Bb not A# as bVII in C major).
+    static Chord spellInKeyContext(const Chord& chord, const KeyScaleData& keyScale);
     static float voicingComplexity(const Chord& chord);
-    // Map drama slider → target tension region centre in [0,1].
+    // Map drama slider → preferred tension centre (for diagnostics); ranking uses soft curves.
     static float targetTensionFromDrama(float drama01);
+    // Soft preference curves (0–1, may dip slightly negative when strongly mismatched).
+    static float tensionPreference(float tension01, float drama01);
+    static float surprisePreference(float surprise01, float drama01);
+    // Standing tension of a chord in key (independent of transition) for trajectory.
+    static float standingTension(const Chord& chord, const KeyScaleData& keyScale);
+    // Quality-aware roman numeral for a degree (ii vs II).
+    static std::string romanForChord(const Chord& chord, const KeyScaleData& keyScale,
+                                     std::optional<Degree> degree = std::nullopt);
+    // Recompute final ranking from filled metrics (+ optional AI/path already in metrics).
+    static void finalizeRanking(NextChordCandidate& candidate, float drama01,
+                                float currentStandingTension);
 
     // Key / scale helpers (also unit-tested).
     static int keyTonicPitchClass(const KeyScaleData& keyScale);

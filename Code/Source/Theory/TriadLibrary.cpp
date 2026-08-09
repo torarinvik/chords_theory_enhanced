@@ -34,10 +34,12 @@ namespace
         return false;
     }
 
-    const char* pitchClassName(int pitchClass, Key rootSpellKey)
+    const char* pitchClassName(int pitchClass, Key rootSpellKey, bool forceFlats = false)
     {
         pitchClass = mod12(pitchClass);
-        return keyPrefersFlats(rootSpellKey) ? kFlatNames[pitchClass] : kSharpNames[pitchClass];
+        if (forceFlats || keyPrefersFlats(rootSpellKey))
+            return kFlatNames[pitchClass];
+        return kSharpNames[pitchClass];
     }
 
     NoteName makeNote(const char* name, int positionInChord)
@@ -129,10 +131,11 @@ int TriadLibrary::inversionCount(TriadQuality quality)
     return 1 + static_cast<int>(qualityIntervals(quality).size());
 }
 
-Chord TriadLibrary::makeTriad(int rootPitchClass, TriadQuality quality, Key rootSpellKey, int inversion)
+Chord TriadLibrary::makeTriad(int rootPitchClass, TriadQuality quality, Key rootSpellKey, int inversion,
+                              bool preferFlats)
 {
     rootPitchClass = mod12(rootPitchClass);
-    const auto* rootName = pitchClassName(rootPitchClass, rootSpellKey);
+    const auto* rootName = pitchClassName(rootPitchClass, rootSpellKey, preferFlats);
 
     struct Tone
     {
@@ -152,7 +155,7 @@ Chord TriadLibrary::makeTriad(int rootPitchClass, TriadQuality quality, Key root
     inversion = std::clamp(inversion, 0, toneCount - 1);
     std::rotate(tones.begin(), tones.begin() + inversion, tones.end());
 
-    const auto* bassName = pitchClassName(tones.front().pitchClass, rootSpellKey);
+    const auto* bassName = pitchClassName(tones.front().pitchClass, rootSpellKey, preferFlats);
     const std::string rootSymbol = std::string(rootName) + qualitySuffix(quality);
 
     Chord chord;
@@ -163,7 +166,7 @@ Chord TriadLibrary::makeTriad(int rootPitchClass, TriadQuality quality, Key root
     chord.popularityOrder = inversion + 1;
 
     for (const auto& tone : tones)
-        chord.notes.push_back(makeNote(pitchClassName(tone.pitchClass, rootSpellKey), tone.role));
+        chord.notes.push_back(makeNote(pitchClassName(tone.pitchClass, rootSpellKey, preferFlats), tone.role));
 
     return chord;
 }

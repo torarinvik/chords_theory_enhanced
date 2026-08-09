@@ -74,9 +74,10 @@ clone with `--recurse-submodules` or run `git submodule update --init --recursiv
   dual columns: Theory (rule-based + Drama/Fit/Tension) left, pure AI right. MIT assets: see
   `Assets/ThirdParty/ChordSeqAI_NOTICE.txt`.
 - Theory next-chord ranking is **destination-first**: score harmonic families (root + family
-  kind), pick one simple representative voicing per family (simplicity prior), then rank by Fit
-  + tension-match to Drama target. Tension is unresolved-feel (not voice-leading); smoothness
-  is a separate axis. Metrics: fit, tension, smoothness, surprise, resolution, complexity.
+  kind), pick one simple representative voicing per family (simplicity prior), then **final
+  rank** with soft Drama tension/surprise curves, trajectory (release/build), productive
+  tension, path value, and AI expectedness (ensemble). Tension ≠ surprise ≠ voice-leading.
+  Romans are quality-aware (`ii`, `V/ii`). Metrics include diagnostic axes for later UI.
 - `MidiEditorState`/`SessionState`/`SessionStateSerializer` — pure data + `juce::ValueTree`
   (de)serialization for everything a session needs to survive a DAW project close/reopen: Key,
   Scale, the chosen chord per degree, and `MidiEditorState` (a pure-data mirror of `MidiEditor`'s

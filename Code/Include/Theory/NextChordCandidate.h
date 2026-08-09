@@ -18,7 +18,7 @@ struct CandidateMetrics
     float coherence = 0.0f;
     // 0–1: how unresolved the music feels after this chord (Tension). Independent of voice-leading.
     float tension = 0.0f;
-    // 0–1: statistical / stylistic unexpectedness (higher = more surprising).
+    // 0–1: statistical / stylistic unexpectedness (higher = more surprising). Not tension.
     float surprise = 0.0f;
     // 0–1: voice-leading / bass smoothness of the transition (higher = smoother). Not tension.
     float voiceLeading = 0.0f;
@@ -26,8 +26,22 @@ struct CandidateMetrics
     float resolution = 0.0f;
     // 0–1: unnecessary specificity (inversions, incomplete/power, extra colour tones).
     float complexity = 0.0f;
+    // 0–1: tension * resolution * coherence — high tension only valuable if it goes somewhere.
+    float productiveTension = 0.0f;
+    // 0–1: forward harmonic momentum (not the same as tension).
+    float forwardMomentum = 0.0f;
+    // 0–1: preference match for Drama slider tension region (soft distribution).
+    float tensionMatch = 0.0f;
+    // 0–1: preference match for Drama slider surprise region.
+    float surpriseMatch = 0.0f;
+    // 0–1: trajectory score (release / maintain / build vs current standing tension).
+    float trajectory = 0.0f;
+    // 0–1: AI model expectedness (0 if unavailable).
+    float aiExpectedness = 0.0f;
+    // 0–1: path / lookahead value (best futures).
+    float pathValue = 0.0f;
 
-    enum class TensionDirection { Release, Maintain, Increase };
+    enum class TensionDirection { Release, Maintain, Build, StrongBuild };
     TensionDirection tensionDirection = TensionDirection::Maintain;
 };
 
@@ -48,7 +62,7 @@ struct NextChordCandidate
     int smoothnessPercent = 0;    // from metrics.voiceLeading
     int resolutionPercent = 0;    // from metrics.resolution
 
-    // Final combined sort key (higher = better match for the current drama target tension).
+    // Final combined sort key (higher = better match for the user's Drama request).
     float rankingScore = 0.0f;
 
     // Short theory tag, e.g. "V/ii" — only formal claims from predicates with a known target.

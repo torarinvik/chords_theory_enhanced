@@ -500,11 +500,15 @@ namespace
         if (!fromDom7 && !fromDomTriad)
             return out;
 
-        // Only treat bare major as "dominant needing resolution" when it is V of something diatonic.
+        // Bare major is only "dominant needing resolution" when it is actually V (or secondary V),
+        // never I→IV (C→F) which is a predominant departure, not a resolution.
         if (!fromDom7)
         {
-            const auto resolvesTo = NextChordScorer::degreeOfRoot(mod12(rootFrom + 5), keyScale);
-            if (!resolvesTo)
+            const auto fromDeg = NextChordScorer::degreeOfRoot(rootFrom, keyScale);
+            const bool isPrimaryV = fromDeg && *fromDeg == Degree::V;
+            const bool isSecondaryV = analyseSecondaryDominant(
+                TriadLibrary::makeTriad(rootFrom, TriadQuality::Major, keyScale.key, 0), keyScale).hit;
+            if (!isPrimaryV && !isSecondaryV)
                 return out;
         }
 
@@ -1117,6 +1121,135 @@ NextChordScorer::HarmonicFamilyKind NextChordScorer::familyKindForQuality(TriadQ
     return HarmonicFamilyKind::MajorColour;
 }
 
+bool NextChordScorer::isIncompleteSonority(TriadQuality quality)
+{
+    return quality == TriadQuality::Power
+        || quality == TriadQuality::Sus2
+        || quality == TriadQuality::Sus4;
+}
+
+bool NextChordScorer::isProlongationOf(const Chord& candidate, const Chord& current)
+{
+    if (candidate.notes.empty() || current.notes.empty())
+        return false;
+    return rootPitchClass(candidate) == rootPitchClass(current);
+}
+
+float NextChordScorer::ideaRepresentativeBonus(const Chord& chord)
+{
+    const auto q = detectTriadQuality(chord);
+    // Full ordinary triads are the default expression of an idea.
+    if (q == TriadQuality::Major || q == TriadQuality::Minor)
+        return 0.55f;
+    if (q == TriadQuality::Dominant7)
+        return 0.35f; // distinct idea family, but still a complete colour
+    if (q == TriadQuality::Major7 || q == TriadQuality::Minor7 || q == TriadQuality::HalfDim7)
+        return 0.10f;
+    if (q == TriadQuality::Diminished || q == TriadQuality::Augmented)
+        return 0.20f;
+    // Power / sus: incomplete — never preferred as the face of a family.
+    if (isIncompleteSonority(q))
+        return -0.85f;
+    return 0.0f;
+}
+
+void NextChordScorer::assignIdeaFamily(const Chord& chord, const KeyScaleData& keyScale,
+                                       int currentRootPc, int& outRootPc, int& outKind)
+{
+    const int root = rootPitchClass(chord);
+    const auto q = detectTriadQuality(chord);
+    outRootPc = root;
+
+    // Power chords: attach to the expected diatonic triad family at this root (idea-level).
+    // A5 in C → vi/Am family (MinorColour), not a free-floating "major power" idea.
+    if (q == TriadQuality::Power)
+    {
+        if (const auto deg = degreeOfRoot(root, keyScale))
+        {
+            const auto fam = scaleFamily(keyScale.scale);
+            // Expected quality class from degree in this scale family.
+            bool expectMinor = false;
+            if (fam == ScaleFamily::Majorish || fam == ScaleFamily::ModalSoft)
+            {
+                expectMinor = (*deg == Degree::II || *deg == Degree::III || *deg == Degree::VI);
+            }
+            else if (fam == ScaleFamily::Minorish)
+            {
+                expectMinor = (*deg == Degree::I || *deg == Degree::IV);
+            }
+            outKind = static_cast<int>(expectMinor ? HarmonicFamilyKind::MinorColour
+                                                   : HarmonicFamilyKind::MajorColour);
+            // vii in major is dim-ish; power on leading tone still maps to diminished family.
+            if ((fam == ScaleFamily::Majorish || fam == ScaleFamily::ModalSoft)
+                && *deg == Degree::VII)
+                outKind = static_cast<int>(HarmonicFamilyKind::Diminished);
+            return;
+        }
+        outKind = static_cast<int>(HarmonicFamilyKind::MajorColour);
+        return;
+    }
+
+    // Sus on a new root is still a colour of that root's idea — fold into expected triad family
+    // when the root is diatonic; otherwise keep Sus as its own incomplete kind.
+    if (q == TriadQuality::Sus2 || q == TriadQuality::Sus4)
+    {
+        if (root == currentRootPc)
+        {
+            // Prolongation of current — kind is still Sus but generator filters prolongations.
+            outKind = static_cast<int>(HarmonicFamilyKind::Sus);
+            return;
+        }
+        if (const auto deg = degreeOfRoot(root, keyScale))
+        {
+            const auto fam = scaleFamily(keyScale.scale);
+            bool expectMinor = false;
+            if (fam == ScaleFamily::Majorish || fam == ScaleFamily::ModalSoft)
+                expectMinor = (*deg == Degree::II || *deg == Degree::III || *deg == Degree::VI);
+            outKind = static_cast<int>(expectMinor ? HarmonicFamilyKind::MinorColour
+                                                   : HarmonicFamilyKind::MajorColour);
+            return;
+        }
+        outKind = static_cast<int>(HarmonicFamilyKind::Sus);
+        return;
+    }
+
+    outKind = static_cast<int>(familyKindForQuality(q));
+}
+
+Chord NextChordScorer::spellInKeyContext(const Chord& chord, const KeyScaleData& keyScale)
+{
+    if (chord.notes.empty())
+        return chord;
+
+    const int root = rootPitchClass(chord);
+    const auto q = detectTriadQuality(chord);
+    const int tonic = keyTonicPitchClass(keyScale);
+    const int rel = ((root - tonic) % 12 + 12) % 12;
+    // In majorish keys, modal-mixture roots prefer flats: bII, bIII, bVI, bVII.
+    const bool mixtureFlat = (rel == 1 || rel == 3 || rel == 8 || rel == 10)
+        && (scaleFamily(keyScale.scale) == ScaleFamily::Majorish
+            || scaleFamily(keyScale.scale) == ScaleFamily::ModalSoft);
+
+    const int bass = bassPitchClass(chord);
+    int inversion = 0;
+    if (bass != root)
+    {
+        const auto intervals = TriadLibrary::qualityIntervals(q);
+        const auto pc = [](int x) { const int m = x % 12; return m < 0 ? m + 12 : m; };
+        if (!intervals.empty() && bass == pc(root + intervals.front()))
+            inversion = 1;
+        else if (intervals.size() >= 2 && bass == pc(root + intervals[1]))
+            inversion = 2;
+        else if (intervals.size() >= 3 && bass == pc(root + intervals[2]))
+            inversion = 3;
+        else
+            inversion = 1;
+    }
+
+    Chord spelled = TriadLibrary::makeTriad(root, q, keyScale.key, inversion, mixtureFlat);
+    return spelled.notes.empty() ? chord : spelled;
+}
+
 float NextChordScorer::voicingComplexity(const Chord& chord)
 {
     if (chord.notes.empty())
@@ -1167,9 +1300,201 @@ float NextChordScorer::voicingComplexity(const Chord& chord)
 
 float NextChordScorer::targetTensionFromDrama(float drama01)
 {
-    // Smooth ~0.12–0.28, Mild ~0.28–0.42, Dramatic ~0.42–0.68, Wild ~0.68–0.88
+    // Soft centre of preferred tension distribution (not a hard target).
     drama01 = std::clamp(drama01, 0.0f, 1.0f);
-    return 0.14f + 0.72f * drama01;
+    return 0.16f + 0.58f * drama01;
+}
+
+float NextChordScorer::tensionPreference(float tension01, float drama01)
+{
+    drama01 = std::clamp(drama01, 0.0f, 1.0f);
+    tension01 = std::clamp(tension01, 0.0f, 1.0f);
+
+    // Soft preferred band centre & width move with Drama.
+    // Smooth: T0–30 excellent; T45+ increasingly penalized; T60–100 strongly penalized.
+    // Wild: favour ~T55–90 but still allow excellent lower-T surprises lightly.
+    const float centre = 0.16f + 0.58f * drama01;
+    const float width = 0.16f + 0.14f * drama01;
+    const float dist = std::abs(tension01 - centre);
+    float score = std::exp(-0.5f * (dist / std::max(width, 0.08f)) * (dist / std::max(width, 0.08f)));
+
+    // Hard tail only near fully Smooth — C7/A7 must not top Smooth, but mid Drama still
+    // allows productive secondary dominants (V/V, V/ii).
+    if (drama01 < 0.28f && tension01 > 0.55f)
+    {
+        const float smoothWeight = 1.0f - (drama01 / 0.28f);
+        const float excess = (tension01 - 0.55f) / 0.45f; // 0..1
+        score -= smoothWeight * (1.15f + 1.45f * excess * excess);
+    }
+    // Mild boost for very low tension when Drama is Smooth.
+    if (drama01 < 0.22f && tension01 < 0.32f)
+        score += (1.0f - drama01 / 0.22f) * 0.15f;
+
+    return score;
+}
+
+float NextChordScorer::surprisePreference(float surprise01, float drama01)
+{
+    drama01 = std::clamp(drama01, 0.0f, 1.0f);
+    surprise01 = std::clamp(surprise01, 0.0f, 1.0f);
+    // Drama blends desired surprise: Smooth prefers expected; Wild prefers adventure.
+    const float centre = 0.10f + 0.55f * drama01;
+    const float width = 0.18f + 0.16f * drama01;
+    const float dist = std::abs(surprise01 - centre);
+    float score = std::exp(-0.5f * (dist / std::max(width, 0.08f)) * (dist / std::max(width, 0.08f)));
+    // Random high-surprise without (handled separately via coherence) still needs a soft floor.
+    if (drama01 < 0.35f && surprise01 > 0.55f)
+        score -= (1.0f - drama01 / 0.35f) * 0.55f * surprise01;
+    return score;
+}
+
+float NextChordScorer::standingTension(const Chord& chord, const KeyScaleData& keyScale)
+{
+    if (chord.notes.empty())
+        return 0.12f;
+
+    const auto q = detectTriadQuality(chord);
+    float t = 0.12f;
+    switch (q)
+    {
+        case TriadQuality::Major:      t = 0.12f; break;
+        case TriadQuality::Minor:      t = 0.18f; break;
+        case TriadQuality::Power:      t = 0.14f; break;
+        case TriadQuality::Sus2:
+        case TriadQuality::Sus4:       t = 0.26f; break;
+        case TriadQuality::Major7:     t = 0.34f; break;
+        case TriadQuality::Minor7:     t = 0.30f; break;
+        case TriadQuality::Dominant7:  t = 0.58f; break;
+        case TriadQuality::Diminished: t = 0.70f; break;
+        case TriadQuality::HalfDim7:   t = 0.64f; break;
+        case TriadQuality::Augmented:  t = 0.66f; break;
+    }
+
+    const int tonic = keyTonicPitchClass(keyScale);
+    const int root = rootPitchClass(chord);
+    t += 0.06f * (static_cast<float>(circleOfFifthsDistance(root, tonic)) / 6.0f);
+
+    if (const auto sec = analyseSecondaryDominant(chord, keyScale);
+        sec.hit && sec.confidence >= kMinLabelConfidence)
+        t += 0.16f * sec.confidence;
+    if (const auto sub = analyseTritoneSubstitution(chord, keyScale);
+        sub.hit && sub.confidence >= kMinLabelConfidence)
+        t += 0.14f * sub.confidence;
+
+    if (const auto deg = degreeOfRoot(root, keyScale); deg && *deg == Degree::V)
+        t += (q == TriadQuality::Dominant7) ? 0.20f : 0.16f; // V wants resolution
+
+    return std::clamp(t, 0.04f, 0.95f);
+}
+
+std::string NextChordScorer::romanForChord(const Chord& chord, const KeyScaleData& keyScale,
+                                           std::optional<Degree> degree)
+{
+    const auto q = detectTriadQuality(chord);
+    std::optional<Degree> deg = degree;
+    if (!deg)
+        deg = degreeOfRoot(rootPitchClass(chord), keyScale);
+    if (!deg)
+        return {};
+
+    RomanQualityHint hint = RomanQualityHint::MajorLike;
+    if (q == TriadQuality::Dominant7)
+        hint = RomanQualityHint::Dominant;
+    else if (q == TriadQuality::Diminished || q == TriadQuality::HalfDim7)
+        hint = RomanQualityHint::DimLike;
+    else if (isMinorishQuality(q))
+        hint = RomanQualityHint::MinorLike;
+    else if (isMajorishQuality(q) || q == TriadQuality::Power || q == TriadQuality::Sus2
+             || q == TriadQuality::Sus4)
+        hint = RomanQualityHint::MajorLike;
+
+    // Diatonic default case when quality is ambiguous (sus/power on a minor degree).
+    if ((q == TriadQuality::Sus2 || q == TriadQuality::Sus4 || q == TriadQuality::Power)
+        && scaleFamily(keyScale.scale) == ScaleFamily::Majorish)
+    {
+        if (*deg == Degree::II || *deg == Degree::III || *deg == Degree::VI)
+            hint = RomanQualityHint::MinorLike;
+        else if (*deg == Degree::VII)
+            hint = RomanQualityHint::DimLike;
+    }
+
+    return formatRomanNumeral(*deg, hint);
+}
+
+void NextChordScorer::finalizeRanking(NextChordCandidate& candidate, float drama01,
+                                      float currentStandingTension)
+{
+    drama01 = std::clamp(drama01, 0.0f, 1.0f);
+    auto& m = candidate.metrics;
+
+    m.productiveTension = std::clamp(m.tension * m.resolution * m.coherence, 0.0f, 1.0f);
+    m.tensionMatch = tensionPreference(m.tension, drama01);
+    m.surpriseMatch = surprisePreference(m.surprise, drama01);
+
+    // Trajectory: current standing tension → candidate tension.
+    const float delta = m.tension - currentStandingTension;
+    if (delta < -0.12f)
+    {
+        m.tensionDirection = (delta < -0.28f) ? CandidateMetrics::TensionDirection::Release
+                                              : CandidateMetrics::TensionDirection::Release;
+        m.trajectory = std::clamp(-delta * 1.4f, 0.0f, 1.0f);
+    }
+    else if (delta > 0.28f)
+    {
+        m.tensionDirection = CandidateMetrics::TensionDirection::StrongBuild;
+        m.trajectory = std::clamp(0.15f - delta * 0.35f, -1.0f, 0.4f); // build is costly when unwanted
+    }
+    else if (delta > 0.12f)
+    {
+        m.tensionDirection = CandidateMetrics::TensionDirection::Build;
+        m.trajectory = std::clamp(0.05f - delta * 0.2f, -0.6f, 0.35f);
+    }
+    else
+    {
+        m.tensionDirection = CandidateMetrics::TensionDirection::Maintain;
+        m.trajectory = 0.25f; // maintaining calm is fine
+    }
+
+    // At high standing tension, reward release strongly (cadence after dominant).
+    if (currentStandingTension > 0.45f && m.tension < currentStandingTension - 0.15f)
+        m.trajectory = std::max(m.trajectory, std::clamp((currentStandingTension - m.tension) * 1.6f, 0.0f, 1.0f));
+
+    // When Smooth, punish build/strong-build trajectories.
+    if (drama01 < 0.4f
+        && (m.tensionDirection == CandidateMetrics::TensionDirection::Build
+            || m.tensionDirection == CandidateMetrics::TensionDirection::StrongBuild))
+        m.trajectory -= (1.0f - drama01 / 0.4f) * 0.55f;
+
+    // Two-stage philosophy: coherence/expectedness dominate; Drama reorders *among good* options.
+    // Cap tension-match so a weak Fit66 candidate cannot beat Fit87 solely via T20 vs T25.
+    const float productiveWeight = 0.08f + 0.50f * drama01;
+    const float surpriseWeight = 0.20f + 0.50f * drama01;
+    const float tensionMatchWeight = 0.55f + 0.45f * drama01; // max ~1.0 at wild; ~0.55 at smooth
+    const float trajectoryWeight = 0.35f + 0.15f * (1.0f - drama01);
+    const float cappedTensionMatch = std::min(m.tensionMatch, 0.92f);
+
+    candidate.rankingScore =
+        1.85f * m.coherence
+        + tensionMatchWeight * cappedTensionMatch
+        + surpriseWeight * m.surpriseMatch
+        + 0.40f * m.resolution
+        + productiveWeight * m.productiveTension
+        + 0.30f * m.pathValue
+        + 0.35f * m.aiExpectedness
+        + trajectoryWeight * m.trajectory
+        + 0.14f * m.forwardMomentum
+        + 0.04f * m.voiceLeading
+        - 0.45f * m.complexity;
+
+    // Stage-1 gate: weak coherence cannot win on tension match alone.
+    if (m.coherence < 0.62f)
+        candidate.rankingScore -= 1.15f * (0.62f - m.coherence);
+    if (m.coherence < 0.72f && drama01 < 0.35f)
+        candidate.rankingScore -= 0.55f * (0.72f - m.coherence);
+
+    // Extra hard clamp: extreme tension at near-zero Drama cannot top the list.
+    if (drama01 < 0.18f && m.tension > 0.65f)
+        candidate.rankingScore -= 1.35f * (m.tension - 0.65f) / 0.35f;
 }
 
 NextChordScorer::HarmonicRole NextChordScorer::roleFor(Degree degree, TriadQuality quality, ScaleFamily family)
@@ -1686,6 +2011,22 @@ void NextChordScorer::score(const Chord& currentChord, const KeyScaleData& keySc
         surprise *= 0.72f; // secondary is colourful but expected as a device
     surprise = std::clamp(surprise, 0.0f, 1.0f);
 
+    // Forward momentum (distinct from tension): root motion + dominant function pull.
+    float forwardMomentum = 0.0f;
+    if (rootDir == 5)
+        forwardMomentum += 0.35f; // up a 4th / falling 5ths
+    else if (rootDir == 7)
+        forwardMomentum += 0.22f;
+    else if (rootMin >= 1 && rootMin <= 3)
+        forwardMomentum += 0.12f;
+    if (toDegree && *toDegree == Degree::V)
+        forwardMomentum += 0.20f;
+    if (secondaryPred.hit && secondaryPred.confidence >= kMinLabelConfidence)
+        forwardMomentum += 0.28f * secondaryPred.confidence;
+    if (toIsTonic && !isDominantLike(toQuality))
+        forwardMomentum *= 0.35f; // resting place — low momentum
+    forwardMomentum = std::clamp(forwardMomentum + stepwiseBassBonus * 0.15f, 0.0f, 1.0f);
+
     auto& m = candidate.metrics;
     m.coherence = coherence;
     m.tension = tension;
@@ -1693,14 +2034,8 @@ void NextChordScorer::score(const Chord& currentChord, const KeyScaleData& keySc
     m.voiceLeading = voiceLeading;
     m.resolution = resolution;
     m.complexity = complexity;
-
-    constexpr float kMid = 0.38f;
-    if (tension < kMid - 0.08f)
-        m.tensionDirection = CandidateMetrics::TensionDirection::Release;
-    else if (tension > kMid + 0.12f)
-        m.tensionDirection = CandidateMetrics::TensionDirection::Increase;
-    else
-        m.tensionDirection = CandidateMetrics::TensionDirection::Maintain;
+    m.forwardMomentum = forwardMomentum;
+    // pathValue / aiExpectedness filled by generator before finalizeRanking.
 
     candidate.fitPercent = std::clamp(static_cast<int>(std::lround(coherence * 100.0f)), 0, 100);
     candidate.tensionPercent = std::clamp(static_cast<int>(std::lround(tension * 100.0f)), 1, 100);
@@ -1708,63 +2043,73 @@ void NextChordScorer::score(const Chord& currentChord, const KeyScaleData& keySc
     candidate.smoothnessPercent = std::clamp(static_cast<int>(std::lround(voiceLeading * 100.0f)), 0, 100);
     candidate.resolutionPercent = std::clamp(static_cast<int>(std::lround(resolution * 100.0f)), 0, 100);
 
-    // Drama → target tension region. Coherence is primary; tension match is secondary
-    // (must not promote random chromatic over idiomatic moves just because T matches).
-    const float Tstar = targetTensionFromDrama(drama01);
-    const float tensionDistance = std::abs(tension - Tstar);
-    // Soft band match: full credit near target; wide falloff.
-    const float tensionMatch = 1.0f - std::clamp(tensionDistance / 0.55f, 0.0f, 1.0f);
+    // Standing tension of the *current* chord for trajectory (not candidate).
+    const float currentStanding = standingTension(currentChord, keyScale);
+    finalizeRanking(candidate, drama01, currentStanding);
 
-    candidate.rankingScore =
-        1.65f * coherence
-        + 0.48f * tensionMatch
-        + 0.38f * resolution
-        + 0.05f * voiceLeading
-        + 0.03f * stepwiseBassBonus // genuine bass step — small; never dominate function
-        - 0.42f * complexity // simplicity prior: ordinary F beats F/C / Fmaj7/C by default
-        - 0.20f * surprise * (1.0f - drama01)
-        + 0.14f * surprise * drama01;
-
-    // Slight demotion for pure same-harmony inversion unless bass is stepwise (already in VL).
+    // Slight demotion for pure same-harmony inversion unless bass is stepwise.
     if (pureInversionChange)
         candidate.rankingScore -= 0.06f;
     // Pedal-bass inversions that only keep common tones: extra simplicity demotion.
     if (bassTo != rootTo && commonBass > 0.5f && !secondaryPred.hit)
         candidate.rankingScore -= 0.10f;
 
-    // Secondary target preference: V/V and V/ii outrank V/iii as next chords from I.
-    // Bare-major "V/x" is a weaker claim than a true dominant seventh.
+    // Secondary / subV functional bonuses: muted at full Smooth, available from mild Drama up.
+    const float dramaGate = std::clamp((drama01 - 0.08f) / 0.42f, 0.0f, 1.0f);
     if (secondaryPred.hit && secondaryPred.confidence >= kMinLabelConfidence)
     {
         const float qualityScale = (toQuality == TriadQuality::Dominant7) ? 1.0f : 0.30f;
-        candidate.rankingScore += 0.55f * qualityScale
+        candidate.rankingScore += dramaGate * 0.70f * qualityScale
             * secondaryTargetWeight(secondaryPred.targetDegree)
             * secondaryPred.confidence;
-        // From a tonic start, V/iii is a weaker next move than V/V or V/ii.
         if (fromRole == HarmonicRole::Tonic && secondaryPred.targetDegree == Degree::III)
-            candidate.rankingScore -= 0.18f;
+            candidate.rankingScore -= 0.15f;
     }
     if (tritoneOk)
-        candidate.rankingScore += 0.12f * tritonePred.confidence;
+        candidate.rankingScore += (0.12f + dramaGate * 0.18f) * tritonePred.confidence;
 
-    // Family tags for generator diversity.
-    candidate.familyRootPc = rootTo;
-    candidate.familyKind = static_cast<int>(familyKindForQuality(toQuality));
+    // Blues I7 / V→I colour after dominant-function current.
+    if (fromRole == HarmonicRole::Dominant && toIsTonic && toQuality == TriadQuality::Dominant7)
+        candidate.rankingScore += 0.22f;
+    // Classic V → I release (including after G triad) — must beat V→iii wander.
+    if (fromRole == HarmonicRole::Dominant && toIsTonic && !isDominantLike(toQuality)
+        && toQuality != TriadQuality::Diminished)
+        candidate.rankingScore += 0.42f;
+    if (grammarTag != nullptr && std::string_view(grammarTag) == "cadence")
+        candidate.rankingScore += 0.22f;
+    // Idea-level family tags (power folds into contextual triad family).
+    assignIdeaFamily(candidate.chord, keyScale, rootFrom, candidate.familyRootPc, candidate.familyKind);
 
     // --- Reason label: strongest functional explanation with target when known ---------
     std::ostringstream reason;
     const bool secondaryOk = secondaryPred.hit && secondaryPred.confidence >= kMinLabelConfidence;
 
-    if (secondaryOk)
+    // V/V preferred over V/iii from a tonic start at default drama.
+    if (secondaryOk && fromRole == HarmonicRole::Tonic
+        && secondaryPred.targetDegree == Degree::V)
+        candidate.rankingScore += 0.22f * std::max(dramaGate, 0.35f);
+    if (secondaryOk && fromRole == HarmonicRole::Tonic
+        && secondaryPred.targetDegree == Degree::III)
+        candidate.rankingScore -= 0.12f;
+
+    // Incomplete sonorities: do not claim certain quality-sensitive romans (A5 ≠ vi for sure).
+    const bool incomplete = isIncompleteSonority(toQuality);
+    if (secondaryOk && !incomplete)
         reason << secondaryPred.label; // e.g. V/ii
-    else if (tritoneOk)
+    else if (tritoneOk && !incomplete)
         reason << (tritonePred.label.empty() ? "subV" : tritonePred.label);
     else if (mixtureOk)
         reason << mixturePredEarly.label;
-    else if (candidate.degree)
-        reason << getDegreeLabel(*candidate.degree);
-    else if (toDegree && toDiatonic)
-        reason << getDegreeLabel(*toDegree);
+    else if (incomplete)
+    {
+        if (toDegree)
+            reason << "open " << getDegreeLabel(*toDegree) << " (ambiguous)";
+        else
+            reason << "open fifth";
+    }
+    else if (const auto roman = romanForChord(candidate.chord, keyScale, candidate.degree);
+             !roman.empty() && (candidate.degree || (toDegree && toDiatonic)))
+        reason << roman;
     else if (toDiatonic)
         reason << "diatonic";
     else if (approach.tag)
@@ -1772,10 +2117,15 @@ void NextChordScorer::score(const Chord& currentChord, const KeyScaleData& keySc
     else
         reason << "chromatic";
 
+    // Directional gloss: only true resolutions after dominant instability; else departure labels.
     if (grammarTag)
         reason << " · " << grammarTag;
     else if (resolveTag)
         reason << " · " << resolveTag;
+    else if (fromRole == HarmonicRole::Tonic && toRole == HarmonicRole::Predominant && !incomplete)
+        reason << " · predominant departure";
+    else if (fromRole == HarmonicRole::Tonic && toRole == HarmonicRole::Dominant && !incomplete)
+        reason << " · dominant departure";
     else if (backdoor.tag)
         reason << " · " << backdoor.tag;
     else if (sus.tag)
