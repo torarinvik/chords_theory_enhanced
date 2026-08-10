@@ -21,7 +21,15 @@ namespace
     constexpr float kGutterWidth = 40.f;
     constexpr float kRulerHeight = 24.f;
     constexpr float kChordLaneHeight = 28.f;
+    // Real horizontal piano (white/black keys) under the chord lane - tall enough for black keys
+    // and bottom note labels, in the style of plugins like Chordz.
+    constexpr float kPianoKeyboardHeight = 72.f;
     constexpr float kScrollbarThickness = 8.f;
+
+    // Fixed span for the bottom piano - independent of roll scroll/zoom. C2–B6 is ~5 octaves of
+    // white keys, readable at typical editor widths.
+    constexpr int kPianoMinMidiNote = 36; // C2
+    constexpr int kPianoMaxMidiNote = 95; // B6 (inclusive)
 
     constexpr double kDefaultContentBars = 32.0;
     constexpr double kDefaultNoteLengthBeats = 1.0; // chords pack ~1 beat apart in the mockup, not
@@ -95,25 +103,27 @@ void MidiEditor::paint(juce::Graphics& g)
     }
 
     {
-        // Extends all the way to every remaining edge - left (under the gutter) and right/bottom
-        // (under the scrollbars' own reserved space) - since the chord lane isn't relative to
-        // either the gutter or the scrollbars; there's nothing else claiming that space, and its
-        // bottom corners need to reach the widget's own true bottom-left/right corners for their
-        // rounding (see paintChordLane) to land exactly on the widget's own outer silhouette.
         const juce::Rectangle<float> chordLaneBounds(0.f, _contentArea.getBottom(),
-            static_cast<float>(getWidth()), static_cast<float>(getHeight()) - _contentArea.getBottom());
+            static_cast<float>(getWidth()), kChordLaneHeight);
         juce::Graphics::ScopedSaveState saved(g);
         g.reduceClipRegion(chordLaneBounds.toNearestInt());
         paintChordLane(g);
     }
 
+    {
+        const juce::Rectangle<float> pianoBounds(0.f, _contentArea.getBottom() + kChordLaneHeight,
+            static_cast<float>(getWidth()), kPianoKeyboardHeight);
+        juce::Graphics::ScopedSaveState saved(g);
+        g.reduceClipRegion(pianoBounds.toNearestInt());
+        paintPianoKeyboard(g);
+    }
+
     paintRuler(g);
     paintGutter(g);
 
-    // Both drawn last, fully on top (low-alpha fills so notes/gridlines/ruler stay legible
-    // underneath) - the loop region's ruler-band highlight needs to sit over paintRuler's own
-    // opaque fill to be visible at all, and the playhead is a transport cursor, conventionally
-    // always drawn on top of everything else.
+    // Drawn last, fully on top (low-alpha fills so notes/gridlines/ruler stay legible underneath) -
+    // the loop region's ruler-band highlight needs to sit over paintRuler's own opaque fill to be
+    // visible at all, and the playhead is a transport cursor, conventionally always on top.
     paintLoopRegion(g);
     paintPlayhead(g);
 }
@@ -127,9 +137,10 @@ void MidiEditor::resized()
     _hScrollBar.setBounds(juce::Rectangle<float>(kGutterWidth, bounds.getHeight() - kScrollbarThickness,
         bounds.getWidth() - kGutterWidth - kScrollbarThickness, kScrollbarThickness).toNearestInt());
     _vScrollBar.setBounds(juce::Rectangle<float>(bounds.getWidth() - kScrollbarThickness, kRulerHeight,
-        kScrollbarThickness, bounds.getHeight() - kRulerHeight - kScrollbarThickness).toNearestInt());
+        kScrollbarThickness, bounds.getHeight() - kRulerHeight - kScrollbarThickness - kPianoKeyboardHeight - kChordLaneHeight).toNearestInt());
 
-    const auto gridBottom = bounds.getHeight() - kScrollbarThickness - kChordLaneHeight;
+    // Bottom chrome (top → bottom): chord lane, mini-piano, horizontal scrollbar.
+    const auto gridBottom = bounds.getHeight() - kScrollbarThickness - kPianoKeyboardHeight - kChordLaneHeight;
     _contentArea = juce::Rectangle<float>(kGutterWidth, kRulerHeight,
         juce::jmax(0.f, bounds.getWidth() - kGutterWidth - kScrollbarThickness),
         juce::jmax(0.f, gridBottom - kRulerHeight));
@@ -361,6 +372,52 @@ void MidiEditor::stopPlayback()
 bool MidiEditor::isPlaying() const
 {
     return _progressionPlayer != nullptr && _progressionPlayer->isPlaying();
+}
+
+double MidiEditor::getUiPlayheadBeat() const
+{
+    if (_progressionPlayer != nullptr && _progressionPlayer->isPlaying())
+        return _progressionPlayer->getPlayheadBeat();
+    return _loopStartBeat;
+}
+
+std::array<bool, 12> MidiEditor::getPlayheadChordPitchClasses() const
+{
+    std::array<bool, 12> pitchClasses {};
+    pitchClasses.fill(false);
+
+    if (_notes.empty() && _chordBlocks.empty())
+        return pitchClasses;
+
+    const auto beat = getUiPlayheadBeat();
+
+    // Prefer the live piano-roll notes still sounding at this beat - they already reflect edits
+    // (deleted tones, re-pitched notes, resized lengths).
+    auto foundActiveNotes = false;
+    for (const auto& note : _notes)
+    {
+        if (beat >= note.startBeat && beat < note.startBeat + note.lengthBeats)
+        {
+            pitchClasses[static_cast<std::size_t>(juce::jlimit(0, 11, note.midiNote % 12))] = true;
+            foundActiveNotes = true;
+        }
+    }
+    if (foundActiveNotes)
+        return pitchClasses;
+
+    // Fall back to the chord block covering this beat (label still present, notes maybe deleted).
+    for (const auto& block : _chordBlocks)
+    {
+        const auto length = effectiveChordBlockLength(block);
+        if (beat < block.startBeat || beat >= block.startBeat + length)
+            continue;
+
+        for (const auto& tone : block.frozenChord.notes)
+            pitchClasses[static_cast<std::size_t>(juce::jlimit(0, 11, tone.getPitchClass()))] = true;
+        break;
+    }
+
+    return pitchClasses;
 }
 
 void MidiEditor::addListener(Listener* listener)
@@ -721,21 +778,13 @@ void MidiEditor::paintChordLane(juce::Graphics& g) const
 {
     const auto laneTop = _contentArea.getBottom();
     const auto laneWidth = static_cast<float>(getWidth());
-    const auto laneHeight = static_cast<float>(getHeight()) - laneTop;
-    const auto radius = nui::Theme::getBorderRadius();
 
-    // Reaches every remaining edge (left, right, bottom) so its bottom-left/bottom-right corners
-    // land exactly on the whole widget's own outer corners - only the bottom two are rounded here,
-    // matching the widget-level displayBackground/displayBorder radius (see the constructor and
-    // paintRuler's own top-rounded counterpart), since a plain fillRect/drawRect would otherwise
-    // square off those corners over top of the widget's own rounded background/border.
-    juce::Path laneBand;
-    laneBand.addRoundedRectangle(0.f, laneTop, laneWidth, laneHeight, radius, radius, false, false, true, true);
-
+    // Middle strip between the grid and the mini-piano - no outer-corner rounding (the piano owns
+    // the widget's bottom silhouette now). Full width including under the gutter/scrollbar.
     g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::BACKGROUND).asJuce());
-    g.fillPath(laneBand);
+    g.fillRect(juce::Rectangle<float>(0.f, laneTop, laneWidth, kChordLaneHeight));
     g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::BORDER).asJuce());
-    g.strokePath(laneBand, juce::PathStrokeType(1.f));
+    g.drawRect(juce::Rectangle<float>(0.f, laneTop, laneWidth, kChordLaneHeight), 1.f);
 
     const auto accent = nui::Theme::newColor(nui::Theme::ThemeColor::ACCENT).asJuce();
     g.setFont(nui::Theme::newFont(nui::Theme::REGULAR, nui::Theme::SMALL));
@@ -899,8 +948,12 @@ void MidiEditor::paintLoopRegion(juce::Graphics& g) const
     g.setColour(accent.withAlpha(0.2f));
     g.fillRect(juce::Rectangle<float>(visibleX0, 0.f, visibleX1 - visibleX0, kRulerHeight));
 
+    // Through the grid + chord lane only - leave the mini-piano un-tinted so chord highlights stay
+    // readable (and the loop region doesn't read as "owned" by the keyboard strip).
+    const auto loopFillBottom = _contentArea.getBottom() + kChordLaneHeight;
     g.setColour(accent.withAlpha(0.08f));
-    g.fillRect(juce::Rectangle<float>(visibleX0, _contentArea.getY(), visibleX1 - visibleX0, static_cast<float>(getHeight()) - _contentArea.getY()));
+    g.fillRect(juce::Rectangle<float>(visibleX0, _contentArea.getY(), visibleX1 - visibleX0,
+        loopFillBottom - _contentArea.getY()));
 
     constexpr float kHandleWidth = 4.f;
     g.setColour(accent);
@@ -917,19 +970,115 @@ void MidiEditor::paintPlayhead(juce::Graphics& g) const
     if (_notes.empty() && !_loopManuallyAdjusted)
         return;
 
-    const auto playing = _progressionPlayer != nullptr && _progressionPlayer->isPlaying();
-    const auto playheadBeat = playing ? _progressionPlayer->getPlayheadBeat() : _loopStartBeat;
-    const auto x = beatToX(playheadBeat);
+    const auto x = beatToX(getUiPlayheadBeat());
     const auto width = static_cast<float>(getWidth());
+    // Stop above the mini-piano so the transport cursor doesn't cut through the keyboard keys.
+    const auto playheadBottom = _contentArea.getBottom() + kChordLaneHeight;
     if (x < kGutterWidth || x > width)
         return;
 
     g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::TEXT).asJuce());
-    g.drawVerticalLine(static_cast<int>(x), 0.f, static_cast<float>(getHeight()));
+    g.drawVerticalLine(static_cast<int>(x), 0.f, playheadBottom);
 
     juce::Path flag;
     flag.addTriangle(x - 4.f, 0.f, x + 4.f, 0.f, x, 8.f);
     g.fillPath(flag);
+}
+
+void MidiEditor::paintPianoKeyboard(juce::Graphics& g) const
+{
+    const auto pianoTop = _contentArea.getBottom() + kChordLaneHeight;
+    const auto pianoWidth = static_cast<float>(getWidth());
+    const auto radius = nui::Theme::getBorderRadius();
+
+    // Owns the widget's bottom-left/bottom-right rounded silhouette. Horizontal scrollbar sits in
+    // the thin strip under this band.
+    juce::Path pianoBand;
+    pianoBand.addRoundedRectangle(0.f, pianoTop, pianoWidth, kPianoKeyboardHeight, radius, radius,
+        false, false, true, true);
+
+    g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::BACKGROUND).asJuce());
+    g.fillPath(pianoBand);
+
+    // Real piano layout (Chordz-style): full-width white keys, shorter black keys on top, letter
+    // labels on white keys, blue highlight for pitch classes in the chord under the playhead.
+    auto whiteKeyCount = 0;
+    for (int midi = kPianoMinMidiNote; midi <= kPianoMaxMidiNote; ++midi)
+    {
+        if (!kIsBlackKey[static_cast<std::size_t>(midi % 12)])
+            ++whiteKeyCount;
+    }
+    if (whiteKeyCount <= 0)
+    {
+        g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::BORDER).asJuce());
+        g.strokePath(pianoBand, juce::PathStrokeType(1.f));
+        return;
+    }
+
+    const auto whiteKeyWidth = pianoWidth / static_cast<float>(whiteKeyCount);
+    const auto blackKeyWidth = whiteKeyWidth * 0.58f;
+    const auto blackKeyHeight = kPianoKeyboardHeight * 0.62f;
+    const auto activePitchClasses = getPlayheadChordPitchClasses();
+
+    // Chordz-like palette: clean white/black keys, cool blue for active chord tones.
+    const auto whiteFill = juce::Colour(0xFFF4F4F4);
+    const auto whiteBorder = juce::Colour(0xFFB8B8B8);
+    const auto blackFill = juce::Colour(0xFF1C1C1C);
+    const auto highlight = nui::Theme::newColor(nui::Theme::ThemeColor::PRIMARY).asJuce();
+    const auto labelOnWhite = juce::Colour(0xFF666666);
+    const auto labelOnHighlight = juce::Colours::white;
+
+    // White keys first (full height).
+    auto whiteIndex = 0;
+    for (int midi = kPianoMinMidiNote; midi <= kPianoMaxMidiNote; ++midi)
+    {
+        const auto pc = midi % 12;
+        if (kIsBlackKey[static_cast<std::size_t>(pc)])
+            continue;
+
+        const auto x = static_cast<float>(whiteIndex) * whiteKeyWidth;
+        const auto bounds = juce::Rectangle<float>(x, pianoTop, whiteKeyWidth, kPianoKeyboardHeight);
+        const auto isActive = activePitchClasses[static_cast<std::size_t>(pc)];
+
+        g.setColour(isActive ? highlight : whiteFill);
+        g.fillRect(bounds);
+        g.setColour(isActive ? highlight.darker(0.15f) : whiteBorder);
+        g.drawRect(bounds, 1.f);
+
+        // Letter at the bottom of the key (C D E F G A B) - same idea as Chordz.
+        const auto label = kNoteNames[static_cast<std::size_t>(pc)];
+        const auto labelBounds = bounds.withTrimmedTop(kPianoKeyboardHeight * 0.55f).reduced(1.f, 2.f);
+        g.setFont(nui::Theme::newFont(nui::Theme::REGULAR, nui::Theme::SMALL));
+        g.setColour(isActive ? labelOnHighlight : labelOnWhite);
+        g.drawText(label, labelBounds, juce::Justification::centredBottom, false);
+
+        ++whiteIndex;
+    }
+
+    // Black keys on top, centred on the seam between neighbouring white keys.
+    whiteIndex = 0;
+    for (int midi = kPianoMinMidiNote; midi <= kPianoMaxMidiNote; ++midi)
+    {
+        const auto pc = midi % 12;
+        if (kIsBlackKey[static_cast<std::size_t>(pc)])
+        {
+            // whiteIndex is the count of white keys to the left of this black key - the seam sits
+            // at whiteIndex * whiteKeyWidth.
+            const auto x = static_cast<float>(whiteIndex) * whiteKeyWidth - blackKeyWidth * 0.5f;
+            const auto bounds = juce::Rectangle<float>(x, pianoTop, blackKeyWidth, blackKeyHeight);
+            const auto isActive = activePitchClasses[static_cast<std::size_t>(pc)];
+
+            g.setColour(isActive ? highlight.brighter(0.12f) : blackFill);
+            g.fillRoundedRectangle(bounds, 1.5f);
+            g.setColour(isActive ? highlight.darker(0.2f) : juce::Colour(0xFF000000));
+            g.drawRoundedRectangle(bounds, 1.5f, 1.f);
+            continue;
+        }
+        ++whiteIndex;
+    }
+
+    g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::BORDER).asJuce());
+    g.strokePath(pianoBand, juce::PathStrokeType(1.f));
 }
 
 double MidiEditor::effectiveChordBlockLength(const ChordBlockData& block) const
