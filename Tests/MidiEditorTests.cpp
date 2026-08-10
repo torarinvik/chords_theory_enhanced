@@ -596,4 +596,60 @@ TEST_CASE("MidiEditor: double-clicking the ruler zooms/scrolls so the loop exact
     editor.mouseDoubleClick(makeMouseEvent(editor, midBarPos));
 
     CHECK(editor.getChordBlockCount() == 0);
+    CHECK(editor.getNoteCount() == 0); // delete must remove the chord's notes too
+}
+
+TEST_CASE("MidiEditor: hover × on a chord-lane chip deletes the chord and its notes", "[MidiEditor]")
+{
+    MidiEditor editor("test-midi-editor");
+    editor.setBounds(0, 0, 800, 400);
+
+    const auto& chord = getTestChord();
+    editor.addChordAtBeat(0.0, chord, testSlot(chord));
+    REQUIRE(editor.getChordBlockCount() == 1);
+    REQUIRE(editor.getNoteCount() > 0);
+
+    // Chip: y = contentBottom+2 … +kChordLaneHeight-2; content bottom =
+    // height - scrollbar - piano - chordLane. Delete disc is centred in the chip, inset from its
+    // right edge (full-bar width ≈ 4*ppb - 4).
+    const auto contentBottom = 400.f - kScrollbarThickness - kPianoKeyboardHeight - kChordLaneHeight;
+    const auto chipCentreY = contentBottom + kChordLaneHeight * 0.5f;
+    const auto chipRight = beatToX(4.0) - 4.f; // length*ppb - 4, start at beat 0
+    const auto deleteX = chipRight - 3.f - 7.f; // pad + half button size (matches MidiEditor.cpp)
+    const juce::Point<float> deletePos { deleteX, chipCentreY };
+
+    editor.mouseMove(makeMouseEvent(editor, deletePos));
+    editor.mouseDown(makeMouseEvent(editor, deletePos));
+    editor.mouseUp(makeMouseEvent(editor, deletePos));
+
+    CHECK(editor.getChordBlockCount() == 0);
+    CHECK(editor.getNoteCount() == 0);
+}
+
+TEST_CASE("MidiEditor: Delete/Backspace removes the selected chord and its notes", "[MidiEditor]")
+{
+    MidiEditor editor("test-midi-editor");
+    editor.setBounds(0, 0, 800, 400);
+
+    editor.addChordAtBeat(0.0, getTestChord(), testSlot(getTestChord()));
+    REQUIRE(editor.getChordBlockCount() == 1);
+    const auto noteCount = editor.getNoteCount();
+    REQUIRE(noteCount > 0);
+
+    const auto chordLaneY = 400.f - kScrollbarThickness - kPianoKeyboardHeight - kChordLaneHeight + 4.f;
+    const juce::Point<float> clickPos { beatToX(0.0) + 20.f, chordLaneY };
+    editor.mouseDown(makeMouseEvent(editor, clickPos));
+    editor.mouseUp(makeMouseEvent(editor, clickPos)); // select + preview
+
+    REQUIRE(editor.keyPressed(juce::KeyPress(juce::KeyPress::deleteKey)));
+    CHECK(editor.getChordBlockCount() == 0);
+    CHECK(editor.getNoteCount() == 0);
+
+    // Nothing selected → Delete is a no-op (not consumed as "handled" only if no selection - we
+    // return false when nothing to delete? Currently returns false only when not delete key.
+    // After delete, further Delete should not crash.
+    editor.addChordAtBeat(0.0, getTestChord(), testSlot(getTestChord()));
+    // No selection after add - Delete should not remove it.
+    CHECK_FALSE(editor.keyPressed(juce::KeyPress(juce::KeyPress::deleteKey)));
+    CHECK(editor.getChordBlockCount() == 1);
 }

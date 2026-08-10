@@ -156,6 +156,7 @@ public:
     void mouseDoubleClick(const juce::MouseEvent&) override;
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     void mouseMagnify(const juce::MouseEvent&, float scaleFactor) override;
+    bool keyPressed(const juce::KeyPress& key) override;
 
 private:
     struct MidiNoteBlock
@@ -212,6 +213,7 @@ private:
     // hit-testing
     [[nodiscard]] int hitTestNote(juce::Point<float>) const;
     [[nodiscard]] int hitTestChordBlock(juce::Point<float>) const;
+    [[nodiscard]] int hitTestChordDeleteButton(juce::Point<float>) const;
     [[nodiscard]] bool isInNoteResizeZone(int noteIndex, juce::Point<float>, bool leftEdge) const;
     [[nodiscard]] bool isInLoopHandleZone(juce::Point<float>, bool startHandle) const;
 
@@ -221,6 +223,13 @@ private:
     // creation, this is computed fresh everywhere the block's effective length matters (painting,
     // hit-testing, collision detection against new drops).
     [[nodiscard]] double effectiveChordBlockLength(const ChordBlockData& block) const;
+
+    // Chord-lane chip geometry (label pill + hover delete ×).
+    [[nodiscard]] juce::Rectangle<float> getChordBlockBounds(const ChordBlockData& block) const;
+    [[nodiscard]] juce::Rectangle<float> getChordDeleteButtonBounds(const ChordBlockData& block) const;
+
+    // Removes the chord-lane block and every piano-roll note tagged with its id.
+    void removeChordBlockAt(int index);
 
     // gestures
     void applyDragAt(juce::Point<float> position);
@@ -266,6 +275,9 @@ private:
     int _dragStartMidiNote = 60;
 
     int _hoveredNoteIndex = -1;
+    int _hoveredChordIndex = -1;
+    bool _hoveredChordDeleteButton = false;
+    int _selectedChordIndex = -1;
     bool _hoveredIsResizeZone = false;
     bool _hoveredResizeIsLeftEdge = false;
     bool _isHovering = false;

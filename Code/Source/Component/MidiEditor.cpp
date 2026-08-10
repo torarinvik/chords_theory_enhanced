@@ -22,6 +22,8 @@ namespace
     constexpr float kGutterWidth = 40.f;
     constexpr float kRulerHeight = 24.f;
     constexpr float kChordLaneHeight = 28.f;
+    constexpr float kChordDeleteButtonSize = 14.f;
+    constexpr float kChordDeleteButtonPad = 3.f;
     // Real horizontal piano under the chord lane - height chosen for readable black-key depth and
     // bottom letter labels at pro-plugin proportions.
     constexpr float kPianoKeyboardHeight = 80.f;
@@ -91,6 +93,7 @@ MidiEditor::MidiEditor(const std::string& identifier, audio::ProgressionPlayer* 
     _vScrollBar.setColour(juce::ScrollBar::thumbColourId, nui::Theme::newColor(nui::Theme::ThemeColor::BACKGROUND).asJuce().withAlpha(0.5f));
 
     addMouseListener(this, true);
+    setWantsKeyboardFocus(true);
     AppSettings::getChangeBroadcaster().addChangeListener(this);
 }
 
@@ -243,11 +246,47 @@ void MidiEditor::clear()
     _notes.clear();
     _chordBlocks.clear();
     _nextChordBlockId = 0;
+    _selectedChordIndex = -1;
+    _hoveredChordIndex = -1;
+    _hoveredChordDeleteButton = false;
     _loopStartBeat = 0.0;
     _loopEndBeat = kBeatsPerBar;
     _loopManuallyAdjusted = false;
     refreshScrollRanges();
     repaint();
+}
+
+void MidiEditor::removeChordBlockAt(int index)
+{
+    if (index < 0 || index >= static_cast<int>(_chordBlocks.size()))
+        return;
+
+    const auto removedId = _chordBlocks[static_cast<std::size_t>(index)].id;
+    _chordBlocks.erase(_chordBlocks.begin() + index);
+    _notes.erase(std::remove_if(_notes.begin(), _notes.end(),
+        [removedId](const MidiNoteBlock& note) { return note.sourceChordId == removedId; }), _notes.end());
+
+    if (_selectedChordIndex == index)
+        _selectedChordIndex = -1;
+    else if (_selectedChordIndex > index)
+        --_selectedChordIndex;
+
+    if (_hoveredChordIndex == index)
+    {
+        _hoveredChordIndex = -1;
+        _hoveredChordDeleteButton = false;
+    }
+    else if (_hoveredChordIndex > index)
+        --_hoveredChordIndex;
+
+    if (_draggedChordIndex == index)
+        _draggedChordIndex = -1;
+    else if (_draggedChordIndex > index)
+        --_draggedChordIndex;
+
+    refreshScrollRanges();
+    repaint();
+    notifyContentChanged();
 }
 
 std::optional<int> MidiEditor::getNoteMidiPitch(int index) const
@@ -323,6 +362,9 @@ void MidiEditor::restoreState(const theory::MidiEditorState& state)
 {
     stopPlayback();
     _loopManuallyAdjusted = false;
+    _selectedChordIndex = -1;
+    _hoveredChordIndex = -1;
+    _hoveredChordDeleteButton = false;
 
     _notes.clear();
     _notes.reserve(state.notes.size());
@@ -620,6 +662,15 @@ void MidiEditor::mouseDown(const juce::MouseEvent& event)
         return;
     }
 
+    // Hover × on a chord-lane chip - one-click delete (block + its notes).
+    const auto deleteChordIndex = hitTestChordDeleteButton(event.position);
+    if (deleteChordIndex >= 0)
+    {
+        removeChordBlockAt(deleteChordIndex);
+        _dragMode = DragMode::None;
+        return;
+    }
+
     const auto noteIndex = hitTestNote(event.position);
     if (noteIndex >= 0)
     {
@@ -643,13 +694,19 @@ void MidiEditor::mouseDown(const juce::MouseEvent& event)
     {
         const auto& block = _chordBlocks[static_cast<std::size_t>(chordIndex)];
         _draggedChordIndex = chordIndex;
+        _selectedChordIndex = chordIndex;
         _dragMode = DragMode::MoveChordBlock;
         _dragStartBeat = block.startBeat;
+        if (getPeer() != nullptr)
+            grabKeyboardFocus();
         startTimerHz(45);
+        repaint();
         return;
     }
 
+    _selectedChordIndex = -1;
     _dragMode = DragMode::None;
+    repaint();
 }
 
 void MidiEditor::mouseDrag(const juce::MouseEvent& event)
@@ -689,7 +746,7 @@ void MidiEditor::mouseUp(const juce::MouseEvent& event)
         return;
     }
 
-    // Chord-lane label: click (no real drag) previews the block's live notes; a real drag moves it.
+    // Chord-lane label: click (no real drag) selects + previews; a real drag moves it.
     if (finishedDragMode == DragMode::MoveChordBlock
         && finishedChordIndex >= 0
         && finishedChordIndex < static_cast<int>(_chordBlocks.size()))
@@ -698,6 +755,9 @@ void MidiEditor::mouseUp(const juce::MouseEvent& event)
         {
             // Undo any micro-nudge so a pure click never mutates the progression.
             _chordBlocks[static_cast<std::size_t>(finishedChordIndex)].startBeat = originalChordStartBeat;
+            _selectedChordIndex = finishedChordIndex;
+            if (getPeer() != nullptr)
+                grabKeyboardFocus();
 
             const auto blockId = _chordBlocks[static_cast<std::size_t>(finishedChordIndex)].id;
             std::vector<int> midiNotes;
@@ -711,6 +771,7 @@ void MidiEditor::mouseUp(const juce::MouseEvent& event)
 
             for (auto* listener : _listeners)
                 listener->onChordBlockPreviewRequested(midiNotes);
+            repaint();
             return;
         }
 
@@ -744,10 +805,9 @@ void MidiEditor::mouseDoubleClick(const juce::MouseEvent& event)
     const auto chordIndex = hitTestChordBlock(event.position);
     if (chordIndex >= 0)
     {
-        _chordBlocks.erase(_chordBlocks.begin() + chordIndex);
-        refreshScrollRanges();
-        repaint();
-        notifyContentChanged();
+        // Double-click a chord chip removes the whole chord (lane + notes) - same as the hover ×
+        // and Delete/Backspace on a selection.
+        removeChordBlockAt(chordIndex);
         return;
     }
 
@@ -758,6 +818,20 @@ void MidiEditor::mouseDoubleClick(const juce::MouseEvent& event)
     refreshScrollRanges();
     repaint();
     notifyContentChanged();
+}
+
+bool MidiEditor::keyPressed(const juce::KeyPress& key)
+{
+    if (key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey)
+    {
+        if (_selectedChordIndex < 0)
+            return false;
+
+        removeChordBlockAt(_selectedChordIndex);
+        return true;
+    }
+
+    return Component::keyPressed(key);
 }
 
 void MidiEditor::mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel)
@@ -865,23 +939,49 @@ void MidiEditor::paintChordLane(juce::Graphics& g) const
     g.drawRect(juce::Rectangle<float>(0.f, laneTop, laneWidth, kChordLaneHeight), 1.f);
 
     const auto accent = nui::Theme::newColor(nui::Theme::ThemeColor::ACCENT).asJuce();
+    const auto textColour = nui::Theme::newColor(nui::Theme::ThemeColor::TEXT).asJuce();
     g.setFont(nui::Theme::newFont(nui::Theme::REGULAR, nui::Theme::SMALL));
 
-    for (const auto& block : _chordBlocks)
+    for (int i = 0; i < static_cast<int>(_chordBlocks.size()); ++i)
     {
-        const auto length = effectiveChordBlockLength(block);
-        const auto bounds = juce::Rectangle<float>(beatToX(block.startBeat), laneTop + 2.f,
-            static_cast<float>(length * static_cast<double>(_pixelsPerBeat)) - 4.f, kChordLaneHeight - 4.f);
+        const auto& block = _chordBlocks[static_cast<std::size_t>(i)];
+        const auto bounds = getChordBlockBounds(block);
         if (bounds.getRight() < _contentArea.getX() || bounds.getX() > _contentArea.getRight())
             continue;
 
-        g.setColour(accent.withAlpha(0.2f));
+        const auto isSelected = i == _selectedChordIndex;
+        const auto isHovered = i == _hoveredChordIndex;
+
+        g.setColour(accent.withAlpha(isSelected ? 0.38f : (isHovered ? 0.28f : 0.2f)));
         g.fillRoundedRectangle(bounds, 4.f);
         g.setColour(accent);
-        g.drawRoundedRectangle(bounds, 4.f, 1.f);
+        g.drawRoundedRectangle(bounds, 4.f, isSelected ? 2.f : 1.f);
 
-        g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::TEXT).asJuce());
-        g.drawText(block.label, bounds, juce::Justification::centred, true);
+        // Leave room on the right for the hover × so the label never sits under it.
+        const auto showDelete = isHovered || isSelected;
+        auto labelBounds = bounds;
+        if (showDelete)
+            labelBounds.removeFromRight(kChordDeleteButtonSize + kChordDeleteButtonPad * 2.f);
+
+        g.setColour(textColour);
+        g.drawText(block.label, labelBounds.reduced(4.f, 0.f), juce::Justification::centred, true);
+
+        if (showDelete)
+        {
+            const auto deleteBounds = getChordDeleteButtonBounds(block);
+            const auto deleteHot = isHovered && _hoveredChordDeleteButton;
+
+            g.setColour(deleteHot ? accent.brighter(0.15f) : accent.withAlpha(0.55f));
+            g.fillEllipse(deleteBounds);
+
+            // Simple × in white - small but readable on the accent disc.
+            g.setColour(juce::Colours::white.withAlpha(0.95f));
+            const auto cx = deleteBounds.getCentreX();
+            const auto cy = deleteBounds.getCentreY();
+            constexpr float arm = 3.2f;
+            g.drawLine(cx - arm, cy - arm, cx + arm, cy + arm, 1.4f);
+            g.drawLine(cx + arm, cy - arm, cx - arm, cy + arm, 1.4f);
+        }
     }
 }
 
@@ -1338,19 +1438,42 @@ int MidiEditor::hitTestNote(juce::Point<float> position) const
 
 int MidiEditor::hitTestChordBlock(juce::Point<float> position) const
 {
-    const auto laneTop = _contentArea.getBottom();
-    if (position.y < laneTop || position.y > laneTop + kChordLaneHeight)
-        return -1;
-
     for (int i = static_cast<int>(_chordBlocks.size()) - 1; i >= 0; --i)
     {
-        const auto& block = _chordBlocks[static_cast<std::size_t>(i)];
-        const auto x0 = beatToX(block.startBeat);
-        const auto x1 = beatToX(block.startBeat + effectiveChordBlockLength(block));
-        if (position.x >= x0 && position.x <= x1)
+        if (getChordBlockBounds(_chordBlocks[static_cast<std::size_t>(i)]).contains(position))
             return i;
     }
     return -1;
+}
+
+int MidiEditor::hitTestChordDeleteButton(juce::Point<float> position) const
+{
+    // Hit the × zone whenever the pointer is over it. The disc is only *painted* when the chip is
+    // hovered/selected, so casual clicks on the right edge of a cold chip still move/select
+    // (the × zone is a small disc inset from the edge). Hovering first is the intended path.
+    for (int i = static_cast<int>(_chordBlocks.size()) - 1; i >= 0; --i)
+    {
+        if (getChordDeleteButtonBounds(_chordBlocks[static_cast<std::size_t>(i)]).contains(position))
+            return i;
+    }
+    return -1;
+}
+
+juce::Rectangle<float> MidiEditor::getChordBlockBounds(const ChordBlockData& block) const
+{
+    const auto laneTop = _contentArea.getBottom();
+    const auto length = effectiveChordBlockLength(block);
+    return juce::Rectangle<float>(beatToX(block.startBeat), laneTop + 2.f,
+        juce::jmax(1.f, static_cast<float>(length * static_cast<double>(_pixelsPerBeat)) - 4.f),
+        kChordLaneHeight - 4.f);
+}
+
+juce::Rectangle<float> MidiEditor::getChordDeleteButtonBounds(const ChordBlockData& block) const
+{
+    const auto chip = getChordBlockBounds(block);
+    return juce::Rectangle<float>(kChordDeleteButtonSize, kChordDeleteButtonSize)
+        .withCentre({ chip.getRight() - kChordDeleteButtonPad - kChordDeleteButtonSize * 0.5f,
+            chip.getCentreY() });
 }
 
 bool MidiEditor::isInNoteResizeZone(int noteIndex, juce::Point<float> position, bool leftEdge) const
@@ -1448,15 +1571,28 @@ void MidiEditor::updateHoverState(juce::Point<float> position)
     const auto noteIndex = hitTestNote(position);
     const auto isLeftResize = noteIndex >= 0 && isInNoteResizeZone(noteIndex, position, true);
     const auto isResize = noteIndex >= 0 && (isLeftResize || isInNoteResizeZone(noteIndex, position, false));
+    const auto chordIndex = hitTestChordBlock(position);
+    // Delete × is shown for hovered/selected chips - while the pointer is over a chip it counts
+    // as hovered for geometry, so the button lights up as soon as you enter the chip.
+    const auto overDelete = chordIndex >= 0
+        && getChordDeleteButtonBounds(_chordBlocks[static_cast<std::size_t>(chordIndex)]).contains(position);
 
-    if (noteIndex == _hoveredNoteIndex && isResize == _hoveredIsResizeZone && isLeftResize == _hoveredResizeIsLeftEdge)
+    if (noteIndex == _hoveredNoteIndex
+        && isResize == _hoveredIsResizeZone
+        && isLeftResize == _hoveredResizeIsLeftEdge
+        && chordIndex == _hoveredChordIndex
+        && overDelete == _hoveredChordDeleteButton)
         return;
 
     _hoveredNoteIndex = noteIndex;
     _hoveredIsResizeZone = isResize;
     _hoveredResizeIsLeftEdge = isLeftResize;
+    _hoveredChordIndex = chordIndex;
+    _hoveredChordDeleteButton = overDelete;
 
-    if (noteIndex < 0)
+    if (overDelete)
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    else if (noteIndex < 0 && chordIndex < 0)
         setMouseCursor(juce::MouseCursor::NormalCursor);
     else if (isResize)
         setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);
