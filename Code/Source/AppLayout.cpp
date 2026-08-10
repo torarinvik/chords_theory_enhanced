@@ -86,8 +86,8 @@ AppLayout::AppLayout(ndsp::ParameterManager& parameterManager, PluginAudioProces
     _mainSection.getLayout().setFixedColumnWidth(8, 24.f);
     _mainSection.getLayout().setFixedColumnWidth(1, 32.f);
     _mainSection.getLayout().setFixedColumnWidth(7, 32.f);
-    // Holds search + Chord/Scale mode + Key/Scale pickers (see KeyScaleSelector).
-    _mainSection.getLayout().setFixedColumnWidth(4, 720.f);
+    // Holds search + Chord/Scale mode + All toggle + Key/Scale pickers (see KeyScaleSelector).
+    _mainSection.getLayout().setFixedColumnWidth(4, 820.f);
     _mainSection.getLayout().setFixedRowHeight(0, 60.f);
     // Row 1 (voicing) is fixed; height is driven by setVoicingVisibility (0 when closed).
 

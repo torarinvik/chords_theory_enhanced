@@ -43,6 +43,8 @@ countries: it ch sm va
 "key_scale_selector_search_placeholder" = "Cerca…"
 "key_scale_selector_search_chord" = "Accordo"
 "key_scale_selector_search_scale" = "Scala"
+"key_scale_selector_search_all_label" = "Tutti"
+"key_scale_selector_search_all_tooltip" = "Attivo: intera libreria. Spento: solo i suggerimenti previsti."
 "synth_adsr_section_title" = "Amp Env"
 "synth_lfo_section_title" = "LFO"
 "synth_filter_section_title" = "Filtro"

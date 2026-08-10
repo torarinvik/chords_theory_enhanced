@@ -43,6 +43,8 @@ countries: de at ch li
 "key_scale_selector_search_placeholder" = "Suchen…"
 "key_scale_selector_search_chord" = "Akkord"
 "key_scale_selector_search_scale" = "Tonleiter"
+"key_scale_selector_search_all_label" = "Alle"
+"key_scale_selector_search_all_tooltip" = "An: gesamte Bibliothek. Aus: nur vorhergesagte Vorschläge."
 "synth_adsr_section_title" = "Amp Env"
 "synth_lfo_section_title" = "LFO"
 "synth_filter_section_title" = "Filter"

@@ -21,6 +21,21 @@ KeyScaleSelector::KeyScaleSelector(const std::string& identifier):
     _searchModeSwitch.setHeightType(nui::Theme::HeightType::THIN);
     _searchModeSwitch.setRounded(true);
 
+    _searchAllLabel.setText(juce::translate("key_scale_selector_search_all_label").toStdString());
+    _searchAllLabel.setFontSize(nui::Theme::LABEL);
+    _searchAllLabel.setJustificationType(juce::Justification::centredRight);
+    _searchAllLabel.setHelpText(juce::translate("key_scale_selector_search_all_tooltip").toStdString());
+
+    _searchAllToggle.addOnValueChangedListener(this);
+    _searchAllToggle.setToggleState(_searchScope == SearchScope::All, juce::dontSendNotification);
+    _searchAllToggle.setHelpText(juce::translate("key_scale_selector_search_all_tooltip").toStdString());
+    // ToggleSwitch paints into its full bounds; without a fixed size it fills the 60px header
+    // row and looks oversized. Keep a compact ~2:1 pill, centred in the cell.
+    _searchAllToggle.setFixedWidth(36.f);
+    _searchAllToggle.setFixedHeight(18.f);
+    _searchAllToggle.setVerticalAlignment(nui::Component::CENTER);
+    _searchAllToggle.setHorizontalAlignment(nui::Component::CENTER);
+
     for (int i = 0; i < theory::kNumKeys; ++i)
         _keyPicker.addItem(theory::getKeyLabel(static_cast<theory::Key>(i)), i + 1);
 
@@ -47,26 +62,31 @@ KeyScaleSelector::KeyScaleSelector(const std::string& identifier):
 
     _layout.setGap(8.f);
     _layout.setDisplayGrid(false);
-    // search | Chord/Scale mode | Key label | Key | Scale label | Scale
-    _layout.init({ 1 }, { 4, 3, 1, 2, 1, 2 });
+    // search | Chord/Scale | All label | All toggle | Key label | Key | Scale label | Scale
+    _layout.init({ 1 }, { 4, 3, 1, 1, 1, 2, 1, 2 });
 
-    _layout.setFixedColumnWidth(2, 36.f);
-    _layout.setFixedColumnWidth(3, 72.f);
-    _layout.setFixedColumnWidth(4, 48.f);
-    _layout.setFixedColumnWidth(5, 140.f);
+    _layout.setFixedColumnWidth(2, 28.f);
+    _layout.setFixedColumnWidth(3, 44.f);
+    _layout.setFixedColumnWidth(4, 36.f);
+    _layout.setFixedColumnWidth(5, 72.f);
+    _layout.setFixedColumnWidth(6, 48.f);
+    _layout.setFixedColumnWidth(7, 140.f);
 
     _layout.addComponent(_searchInput, 0, 0, 1, 1);
     _layout.addComponent(_searchModeSwitch, 0, 1, 1, 1);
-    _layout.addComponent(_keyLabel, 0, 2, 1, 1);
-    _layout.addComponent(_keyPicker, 0, 3, 1, 1);
-    _layout.addComponent(_scaleLabel, 0, 4, 1, 1);
-    _layout.addComponent(_scalePicker, 0, 5, 1, 1);
+    _layout.addComponent(_searchAllLabel, 0, 2, 1, 1);
+    _layout.addComponent(_searchAllToggle, 0, 3, 1, 1);
+    _layout.addComponent(_keyLabel, 0, 4, 1, 1);
+    _layout.addComponent(_keyPicker, 0, 5, 1, 1);
+    _layout.addComponent(_scaleLabel, 0, 6, 1, 1);
+    _layout.addComponent(_scalePicker, 0, 7, 1, 1);
 }
 
 KeyScaleSelector::~KeyScaleSelector()
 {
     _searchInput.removeOnValueChangedListener(this);
     _searchModeSwitch.removeListener(this);
+    _searchAllToggle.removeListener(this);
     _keyPicker.removeListener(this);
     _scalePicker.removeListener(this);
     AppLocalisation::getChangeBroadcaster().removeChangeListener(this);
@@ -128,6 +148,15 @@ void KeyScaleSelector::onValueChanged(const std::string& componentID, const std:
     notifySearchListeners();
 }
 
+void KeyScaleSelector::onToggleValueChanged(const std::string& componentID, bool isOn)
+{
+    if (componentID != _searchAllToggle.getComponentID())
+        return;
+
+    _searchScope = isOn ? SearchScope::All : SearchScope::Predicted;
+    notifySearchListeners();
+}
+
 void KeyScaleSelector::notifyKeyScaleListeners()
 {
     for (auto* listener : _listeners)
@@ -138,7 +167,7 @@ void KeyScaleSelector::notifySearchListeners()
 {
     const auto query = _searchInput.getText();
     for (auto* listener : _listeners)
-        listener->onSearchChanged(query, _searchMode);
+        listener->onSearchChanged(query, _searchMode, _searchScope);
 }
 
 void KeyScaleSelector::changeListenerCallback(juce::ChangeBroadcaster* source)
@@ -161,6 +190,9 @@ void KeyScaleSelector::changeListenerCallback(juce::ChangeBroadcaster* source)
     _searchModeSwitch.setLabels(
         juce::translate("key_scale_selector_search_chord").toStdString(),
         juce::translate("key_scale_selector_search_scale").toStdString());
+    _searchAllLabel.setText(juce::translate("key_scale_selector_search_all_label").toStdString());
+    _searchAllLabel.setHelpText(juce::translate("key_scale_selector_search_all_tooltip").toStdString());
+    _searchAllToggle.setHelpText(juce::translate("key_scale_selector_search_all_tooltip").toStdString());
 
     repaint();
 }

@@ -43,6 +43,8 @@ countries: fr be mc ch lu
 "key_scale_selector_search_placeholder" = "Rechercher…"
 "key_scale_selector_search_chord" = "Accord"
 "key_scale_selector_search_scale" = "Gamme"
+"key_scale_selector_search_all_label" = "Tout"
+"key_scale_selector_search_all_tooltip" = "Activé : toute la bibliothèque. Désactivé : suggestions prédites uniquement."
 "synth_adsr_section_title" = "Amp Env"
 "synth_lfo_section_title" = "LFO"
 "synth_filter_section_title" = "Filtre"

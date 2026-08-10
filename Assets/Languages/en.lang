@@ -58,6 +58,8 @@ countries: us gb au ca nz ie
 "key_scale_selector_search_placeholder" = "Search…"
 "key_scale_selector_search_chord" = "Chord"
 "key_scale_selector_search_scale" = "Scale"
+"key_scale_selector_search_all_label" = "All"
+"key_scale_selector_search_all_tooltip" = "On: search the full library. Off: search only predicted suggestions."
 "synth_adsr_section_title" = "Amp Env"
 "synth_lfo_section_title" = "LFO"
 "synth_filter_section_title" = "Filter"
