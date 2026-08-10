@@ -33,6 +33,8 @@ countries: es mx ar cl co pe
 "progression_preset_twelve_bar_blues" = "Blues de 12 compases"
 "progression_preset_eight_bar_blues" = "Blues de 8 compases"
 "progression_presets_label" = "Preajustes de progresión"
+"progression_bpm_label" = "BPM"
+"progression_bpm_tooltip" = "Tempo de reproducción de la progresión"
 "progression_preset_picker_placeholder" = "Selecciona un preajuste"
 "chords_tab_label" = "Acordes"
 "synth_tab_label" = "Synth"

@@ -25,14 +25,15 @@ struct ScheduledNote
 // renders each block - reuses the existing polyphonic Synthesiser path unchanged, no new
 // voice-management code needed.
 //
-// Cross-thread contract: setNotes/setLoopBounds/play/stop/isPlaying/getPlayheadBeat are message-
-// thread only; renderNextBlock is audio-thread only, called from ChordSynthEngine::renderNextBlock.
-// The note list is a fixed-capacity, wait-free double-buffer (message thread writes the *inactive*
-// buffer, then flips an atomic index with release ordering; the audio thread acquire-loads that
-// index once per block and reads whichever buffer it currently names) - no heap allocation, no
-// locking, on either side. Loop bounds/play-state/playhead position are plain atomics; play()
-// writes the playhead before the isPlaying flag (release ordering) so the audio thread's
-// acquire-load of isPlaying is guaranteed to see the seeked playhead too.
+// Cross-thread contract: setNotes/setLoopBounds/setBpm/play/stop/seek/isPlaying/getPlayheadBeat/
+// getBpm are message-thread only; renderNextBlock is audio-thread only, called from
+// ChordSynthEngine::renderNextBlock. The note list is a fixed-capacity, wait-free double-buffer
+// (message thread writes the *inactive* buffer, then flips an atomic index with release ordering;
+// the audio thread acquire-loads that index once per block and reads whichever buffer it currently
+// names) - no heap allocation, no locking, on either side. Loop bounds/play-state/playhead/bpm/
+// pending-seek are plain atomics; play()/seek() publish the playhead before the isPlaying flag
+// (release ordering) so the audio thread's acquire-load of isPlaying is guaranteed to see the
+// seeked playhead too.
 class ProgressionPlayer
 {
 public:
@@ -47,24 +48,38 @@ public:
     // already playing, a live resize is picked up immediately, not just on the next play().
     void setLoopBounds(double loopStartBeat, double loopEndBeat);
 
-    // Message thread only. Seeks the playhead to the current loop start and begins playback.
+    // Message thread only. Tempo for progression playback (standalone sequencer). Independent of
+    // host tempo used for LFO sync elsewhere. Clamped to a sensible musical range.
+    void setBpm(double bpm);
+    [[nodiscard]] double getBpm() const;
+
+    // Message thread only. Parks/moves the playhead. While playing, the audio thread applies the
+    // seek on the next block (force-releasing sounding notes). beat is clamped to >= 0; if outside
+    // the current loop, play() will re-clamp into the loop when transport starts.
+    void seek(double beat);
+
+    // Message thread only. Begins playback from the current playhead if it lies inside the loop,
+    // otherwise from loop start.
     void play();
 
     // Message thread only. The audio thread force-releases any still-sounding notes on its next
-    // renderNextBlock call.
+    // renderNextBlock call. Playhead position is preserved (not rewound).
     void stop();
 
     [[nodiscard]] bool isPlaying() const;
     [[nodiscard]] double getPlayheadBeat() const;
 
-    // Audio thread only - called once per block from ChordSynthEngine::renderNextBlock, right
-    // after bpm has been resolved (host tempo if available, else the caller's own fallback).
+    // Audio thread only - called once per block from ChordSynthEngine::renderNextBlock.
+    // bpm is the tempo for this block (typically getBpm() from the message-thread setting).
     void renderNextBlock(juce::MidiBuffer& midiMessages, int numSamples, double sampleRate, double bpm);
 
 private:
     static constexpr int kMidiChannel = 1;
     static constexpr float kPlaybackVelocity = 0.9f;
     static constexpr int kMaxScheduledNotes = 512;
+    static constexpr double kMinBpm = 20.0;
+    static constexpr double kMaxBpm = 400.0;
+    static constexpr double kDefaultBpm = 120.0;
 
     std::array<ScheduledNote, kMaxScheduledNotes> _noteBuffers[2];
     std::atomic<int> _noteCounts[2] { 0, 0 };
@@ -73,6 +88,7 @@ private:
     std::atomic<double> _loopStartBeat { 0.0 };
     std::atomic<double> _loopEndBeat { 4.0 };
     std::atomic<bool> _isPlaying { false };
+    std::atomic<double> _bpm { kDefaultBpm };
 
     // The authoritative position within the current loop pass - an exact sample count, never
     // itself touched by floating-point arithmetic, so it can't accumulate rounding drift no matter
@@ -85,6 +101,10 @@ private:
     // late (and the lateness itself compound pass over pass) purely from accumulated error.
     std::atomic<juce::int64> _samplesIntoLoop { 0 };
     std::atomic<double> _playheadBeat { 0.0 };
+
+    // Message thread writes, audio thread consumes once per block when set.
+    std::atomic<bool> _hasPendingSeek { false };
+    std::atomic<double> _pendingSeekBeat { 0.0 };
 
     // Audio-thread-only - which notes are currently sounding, so note-offs (both natural and
     // forced, at stop()/loop-wrap) know exactly what to release. Never touched by the message

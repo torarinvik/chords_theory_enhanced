@@ -25,6 +25,8 @@ countries: de at ch li
 "progression_save_preset_confirm" = "Speichern"
 "progression_save_preset_placeholder" = "Preset-Name"
 "progression_presets_label" = "Akkordfolge-Presets"
+"progression_bpm_label" = "BPM"
+"progression_bpm_tooltip" = "Tempo für die Progressionswiedergabe"
 "progression_preset_picker_placeholder" = "Preset auswählen"
 "progression_preset_pop_i_v_vi_iv" = "I - V - vi - IV (Pop)"
 "progression_preset_fifty" = "I - vi - IV - V (50er)"

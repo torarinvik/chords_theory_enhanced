@@ -503,6 +503,33 @@ TEST_CASE("MidiEditor::getPlayheadChordPitchClasses reflects notes under the loo
     CHECK(active[7]);
 }
 
+TEST_CASE("MidiEditor: clicking the ruler seeks the playhead to that bar", "[MidiEditor]")
+{
+    ProgressionPlayer player;
+    MidiEditor editor("test-midi-editor", &player);
+    editor.setBounds(0, 0, 800, 400);
+
+    editor.addChordAtBeat(0.0, getTestChord(), testSlot(getTestChord()));
+    editor.addChordAtBeat(kBeatsPerBar, getTestChord(), testSlot(getTestChord()));
+
+    // Click in the ruler over beat ~5 → bar 1 start (beat 4).
+    const juce::Point<float> rulerPos { beatToX(5.0), 10.f };
+    editor.mouseDown(makeMouseEvent(editor, rulerPos));
+    editor.mouseUp(makeMouseEvent(editor, rulerPos));
+
+    CHECK(editor.getPlayheadBeat() == Catch::Approx(4.0));
+    CHECK(player.getPlayheadBeat() == Catch::Approx(4.0));
+}
+
+TEST_CASE("MidiEditor::setBpm forwards to the progression player", "[MidiEditor]")
+{
+    ProgressionPlayer player;
+    MidiEditor editor("test-midi-editor", &player);
+    editor.setBpm(96.0);
+    CHECK(editor.getBpm() == Catch::Approx(96.0));
+    CHECK(player.getBpm() == Catch::Approx(96.0));
+}
+
 TEST_CASE("MidiEditor::startPlayback on an empty editor is a no-op", "[MidiEditor]")
 {
     ProgressionPlayer player;

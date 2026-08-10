@@ -25,6 +25,8 @@ countries: pt br
 "progression_save_preset_confirm" = "Guardar"
 "progression_save_preset_placeholder" = "Nome da predefinição"
 "progression_presets_label" = "Predefinições de progressão"
+"progression_bpm_label" = "BPM"
+"progression_bpm_tooltip" = "Andamento da reprodução da progressão"
 "progression_preset_picker_placeholder" = "Selecionar uma predefinição"
 "progression_preset_pop_i_v_vi_iv" = "I - V - vi - IV (Pop)"
 "progression_preset_fifty" = "I - vi - IV - V (Anos 50)"

@@ -25,6 +25,8 @@ countries: fr be mc ch lu
 "progression_save_preset_confirm" = "Enregistrer"
 "progression_save_preset_placeholder" = "Nom du préréglage"
 "progression_presets_label" = "Préréglages de progression"
+"progression_bpm_label" = "BPM"
+"progression_bpm_tooltip" = "Tempo de lecture de la progression"
 "progression_preset_picker_placeholder" = "Sélectionner un préréglage"
 "progression_preset_pop_i_v_vi_iv" = "I - V - vi - IV (Pop)"
 "progression_preset_fifty" = "I - vi - IV - V (Années 50)"

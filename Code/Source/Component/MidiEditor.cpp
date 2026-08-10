@@ -400,9 +400,51 @@ bool MidiEditor::isPlaying() const
 
 double MidiEditor::getUiPlayheadBeat() const
 {
-    if (_progressionPlayer != nullptr && _progressionPlayer->isPlaying())
+    if (_progressionPlayer != nullptr)
         return _progressionPlayer->getPlayheadBeat();
     return _loopStartBeat;
+}
+
+double MidiEditor::getPlayheadBeat() const
+{
+    return getUiPlayheadBeat();
+}
+
+double MidiEditor::snapBeatToBar(double beat) noexcept
+{
+    return std::floor(juce::jmax(0.0, beat) / kBeatsPerBar) * kBeatsPerBar;
+}
+
+void MidiEditor::seekPlayheadToBeat(double beat)
+{
+    if (_progressionPlayer == nullptr)
+        return;
+
+    _progressionPlayer->seek(snapBeatToBar(beat));
+    repaint();
+}
+
+void MidiEditor::setBpm(double bpm)
+{
+    if (_progressionPlayer != nullptr)
+        _progressionPlayer->setBpm(bpm);
+}
+
+double MidiEditor::getBpm() const
+{
+    return _progressionPlayer != nullptr ? _progressionPlayer->getBpm() : 120.0;
+}
+
+void MidiEditor::seekPlayheadFromPosition(juce::Point<float> position)
+{
+    if (_progressionPlayer == nullptr)
+        return;
+
+    // Ruler (and seek drags) map x → beat; ignore the gutter so a click there doesn't jump to 0.
+    if (position.x < kGutterWidth)
+        return;
+
+    seekPlayheadToBeat(xToBeat(position.x));
 }
 
 std::array<bool, 12> MidiEditor::getPlayheadChordPitchClasses() const
@@ -569,6 +611,15 @@ void MidiEditor::mouseDown(const juce::MouseEvent& event)
         return;
     }
 
+    // Click/scrub on the bar ruler (outside loop handles) moves the playhead to that bar.
+    if (event.position.y >= 0.f && event.position.y <= kRulerHeight && event.position.x >= kGutterWidth)
+    {
+        _dragMode = DragMode::SeekPlayhead;
+        seekPlayheadFromPosition(event.position);
+        startTimerHz(45);
+        return;
+    }
+
     const auto noteIndex = hitTestNote(event.position);
     if (noteIndex >= 0)
     {
@@ -626,6 +677,9 @@ void MidiEditor::mouseUp(const juce::MouseEvent& event)
 
     refreshScrollRanges();
     repaint();
+
+    if (finishedDragMode == DragMode::SeekPlayhead)
+        return; // pure transport gesture - no content mutation
 
     if (finishedDragMode == DragMode::ResizeLoopStart || finishedDragMode == DragMode::ResizeLoopEnd)
     {
@@ -1382,6 +1436,10 @@ void MidiEditor::applyDragAt(juce::Point<float> position)
         const auto snappedEnd = snap ? snapBeat(rawEnd) : rawEnd;
         _loopEndBeat = juce::jmax(_loopStartBeat + kSnapBeats, snappedEnd); // no upper bound
         repaint();
+    }
+    else if (_dragMode == DragMode::SeekPlayhead)
+    {
+        seekPlayheadFromPosition(position);
     }
 }
 

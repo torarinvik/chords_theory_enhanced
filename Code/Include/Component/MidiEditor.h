@@ -123,6 +123,15 @@ public:
     [[nodiscard]] double getLoopStartBeat() const { return _loopStartBeat; }
     [[nodiscard]] double getLoopEndBeat() const { return _loopEndBeat; }
 
+    // Parks/moves the playhead (and live-seeks if currently playing). beat is snapped to the start
+    // of its bar. No-op without a ProgressionPlayer.
+    void seekPlayheadToBeat(double beat);
+    [[nodiscard]] double getPlayheadBeat() const;
+
+    // Sequencer tempo (BPM) for progression playback - forwarded to ProgressionPlayer.
+    void setBpm(double bpm);
+    [[nodiscard]] double getBpm() const;
+
     // Pitch classes (0-11) belonging to whatever is sounding under the UI playhead position -
     // live piano-roll notes active at that beat, or the chord block covering it when notes have
     // been deleted. Used by the bottom mini-piano highlight (and unit-tested directly).
@@ -171,7 +180,7 @@ private:
         theory::Chord frozenChord; // full harmony at drop time (for next-chord context)
     };
 
-    enum class DragMode { None, MoveNote, ResizeNoteStart, ResizeNoteEnd, MoveChordBlock, ResizeLoopStart, ResizeLoopEnd };
+    enum class DragMode { None, MoveNote, ResizeNoteStart, ResizeNoteEnd, MoveChordBlock, ResizeLoopStart, ResizeLoopEnd, SeekPlayhead };
 
     void timerCallback() override; // drag-triggered auto-scroll, and while playing, playhead repaint
 
@@ -192,8 +201,13 @@ private:
     [[nodiscard]] int yToPitch(float y) const noexcept;
     [[nodiscard]] static double snapBeat(double beat) noexcept;
 
-    // Same beat the playhead line uses (live while playing, else loop start).
+    // Same beat the playhead line uses (player playhead when available, else loop start).
     [[nodiscard]] double getUiPlayheadBeat() const;
+
+    // Snaps beat to the containing bar's start (whole bars of kBeatsPerBar).
+    [[nodiscard]] static double snapBeatToBar(double beat) noexcept;
+
+    void seekPlayheadFromPosition(juce::Point<float> position);
 
     // hit-testing
     [[nodiscard]] int hitTestNote(juce::Point<float>) const;

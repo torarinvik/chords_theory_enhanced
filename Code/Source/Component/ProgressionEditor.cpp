@@ -40,32 +40,53 @@ ProgressionEditor::ProgressionEditor(const std::string& identifier, ChordResolve
     _presetsLabel.setFontSize(nui::Theme::LABEL);
     _presetsLabel.setJustificationType(juce::Justification::centredRight);
 
+    _bpmLabel.setText(juce::translate("progression_bpm_label").toStdString());
+    _bpmLabel.setFontSize(nui::Theme::LABEL);
+    _bpmLabel.setJustificationType(juce::Justification::centredRight);
+
+    _bpmSlider.setComponentID("progression-bpm-slider");
+    _bpmSlider.setSliderStyle(juce::Slider::IncDecButtons);
+    _bpmSlider.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 44, 22);
+    _bpmSlider.setRange(40.0, 240.0, 1.0);
+    _bpmSlider.setValue(_midiEditor.getBpm(), juce::dontSendNotification);
+    _bpmSlider.setTooltip(juce::translate("progression_bpm_tooltip"));
+    _bpmSlider.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    _bpmSlider.onValueChange = [this]
+    {
+        _midiEditor.setBpm(_bpmSlider.getValue());
+    };
+
     _midiEditor.addListener(this);
 
     _layout.setGap(8.f);
     _layout.setDisplayGrid(false);
 
-    // play | clear | gap | drag | flex | presets label | picker | save
-    _layout.init({ 1, 1, 1 }, { 1, 1, 1, 1, 3, 1, 1, 1 });
+    // play | clear | gap | bpm label | bpm | gap | drag | flex | presets label | picker | save
+    _layout.init({ 1, 1, 1 }, { 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1 });
 
     _layout.setFixedColumnWidth(0, 32.f);
     _layout.setFixedColumnWidth(1, 32.f);
-    _layout.setFixedColumnWidth(2, 12.f);
-    _layout.setFixedColumnWidth(3, 150.f);
-    _layout.setFixedColumnWidth(5, 175.f);
-    _layout.setFixedColumnWidth(6, 250.f);
-    _layout.setFixedColumnWidth(7, 32.f);
+    _layout.setFixedColumnWidth(2, 8.f);
+    _layout.setFixedColumnWidth(3, 36.f);
+    _layout.setFixedColumnWidth(4, 96.f);
+    _layout.setFixedColumnWidth(5, 8.f);
+    _layout.setFixedColumnWidth(6, 150.f);
+    _layout.setFixedColumnWidth(8, 160.f);
+    _layout.setFixedColumnWidth(9, 220.f);
+    _layout.setFixedColumnWidth(10, 32.f);
 
     _layout.setFixedRowHeight(0, kHeaderRowHeight);
     _layout.setFixedRowHeight(1, 12.f);
 
     _layout.addComponent(_playButton, 0, 0, 1, 1);
     _layout.addComponent(_clearButton, 0, 1, 1, 1);
-    _layout.addComponent(_dragHandle, 0, 3, 1, 1);
-    _layout.addComponent(_presetsLabel, 0, 5, 1, 1);
-    _layout.addComponent(_presetPicker, 0, 6, 1, 1);
-    _layout.addComponent(_savePresetButton, 0, 7, 1, 1);
-    _layout.addComponent(_midiEditor, 2, 0, 8, 1);
+    _layout.addComponent(_bpmLabel, 0, 3, 1, 1);
+    _layout.addComponent("progression-bpm-slider", _bpmSlider, 0, 4, 1, 1);
+    _layout.addComponent(_dragHandle, 0, 6, 1, 1);
+    _layout.addComponent(_presetsLabel, 0, 8, 1, 1);
+    _layout.addComponent(_presetPicker, 0, 9, 1, 1);
+    _layout.addComponent(_savePresetButton, 0, 10, 1, 1);
+    _layout.addComponent(_midiEditor, 2, 0, 11, 1);
 }
 
 ProgressionEditor::~ProgressionEditor()

@@ -30,12 +30,40 @@ void ProgressionPlayer::setLoopBounds(double loopStartBeat, double loopEndBeat)
     _loopEndBeat.store(loopEndBeat, std::memory_order_relaxed);
 }
 
+void ProgressionPlayer::setBpm(double bpm)
+{
+    _bpm.store(juce::jlimit(kMinBpm, kMaxBpm, bpm), std::memory_order_relaxed);
+}
+
+double ProgressionPlayer::getBpm() const
+{
+    return _bpm.load(std::memory_order_relaxed);
+}
+
+void ProgressionPlayer::seek(double beat)
+{
+    const auto target = juce::jmax(0.0, beat);
+    // UI sees the new position immediately; audio applies sample-accurate seek on next block if
+    // playing (and play() reuses the same pending-seek path when transport starts).
+    _playheadBeat.store(target, std::memory_order_release);
+    _pendingSeekBeat.store(target, std::memory_order_relaxed);
+    _hasPendingSeek.store(true, std::memory_order_release);
+}
+
 void ProgressionPlayer::play()
 {
-    // Written before isPlaying (release) so the audio thread's acquire-load of isPlaying is
-    // guaranteed to observe this seek too - see the class doc comment.
-    _samplesIntoLoop.store(0, std::memory_order_relaxed);
-    _playheadBeat.store(_loopStartBeat.load(std::memory_order_relaxed), std::memory_order_release);
+    auto beat = _playheadBeat.load(std::memory_order_relaxed);
+    const auto loopStart = _loopStartBeat.load(std::memory_order_relaxed);
+    const auto loopEnd = _loopEndBeat.load(std::memory_order_relaxed);
+
+    // Start from the parked playhead when it's inside the loop; otherwise rewind to loop start.
+    if (beat < loopStart || beat >= loopEnd)
+        beat = loopStart;
+
+    _playheadBeat.store(beat, std::memory_order_release);
+    _pendingSeekBeat.store(beat, std::memory_order_relaxed);
+    _hasPendingSeek.store(true, std::memory_order_release);
+    // samplesIntoLoop is set by the audio thread when it consumes the pending seek (needs bpm/sr).
     _isPlaying.store(true, std::memory_order_release);
 }
 
@@ -91,6 +119,25 @@ void ProgressionPlayer::renderNextBlock(juce::MidiBuffer& midiMessages, int numS
     const auto loopLengthSamples = juce::jmax(juce::int64 { 1 }, static_cast<juce::int64>(std::llround(loopLengthBeats / beatsPerSample)));
 
     auto samplesIntoLoop = _samplesIntoLoop.load(std::memory_order_relaxed);
+
+    // Consume a message-thread seek (from seek() or play()) at the top of the block so note
+    // scheduling for this block starts at the new position.
+    if (_hasPendingSeek.exchange(false, std::memory_order_acquire))
+    {
+        for (const int note : _currentlySoundingNotes)
+            midiMessages.addEvent(juce::MidiMessage::noteOff(kMidiChannel, note), 0);
+        _currentlySoundingNotes.clear();
+
+        auto seekBeat = _pendingSeekBeat.load(std::memory_order_relaxed);
+        if (seekBeat < loopStart || seekBeat >= loopEnd)
+            seekBeat = loopStart;
+
+        const auto beatsIntoLoop = juce::jmax(0.0, seekBeat - loopStart);
+        samplesIntoLoop = static_cast<juce::int64>(std::llround(beatsIntoLoop / beatsPerSample));
+        samplesIntoLoop = juce::jlimit(juce::int64 { 0 }, loopLengthSamples - 1, samplesIntoLoop);
+        _playheadBeat.store(loopStart + static_cast<double>(samplesIntoLoop) * beatsPerSample, std::memory_order_relaxed);
+    }
+
     int sampleCursor = 0;
     int remainingSamples = numSamples;
 
