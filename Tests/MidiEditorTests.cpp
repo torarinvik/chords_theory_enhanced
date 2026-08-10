@@ -35,7 +35,7 @@ namespace
     constexpr int kInitialTopMidiNote = 67;
     constexpr float kScrollbarThickness = 8.f;
     constexpr float kChordLaneHeight = 28.f;
-    constexpr float kPianoKeyboardHeight = 72.f; // real bottom piano strip (see MidiEditor.cpp)
+    constexpr float kPianoKeyboardHeight = 80.f; // real bottom piano strip (see MidiEditor.cpp)
     constexpr double kBeatsPerBar = 4.0; // a dropped chord's default length/snap cell is a full bar
 
     float beatToX(double beat) { return kGutterWidth + static_cast<float>(beat) * kPixelsPerBeat; }

@@ -21,9 +21,9 @@ namespace
     constexpr float kGutterWidth = 40.f;
     constexpr float kRulerHeight = 24.f;
     constexpr float kChordLaneHeight = 28.f;
-    // Real horizontal piano (white/black keys) under the chord lane - tall enough for black keys
-    // and bottom note labels, in the style of plugins like Chordz.
-    constexpr float kPianoKeyboardHeight = 72.f;
+    // Real horizontal piano under the chord lane - height chosen for readable black-key depth and
+    // bottom letter labels at pro-plugin proportions.
+    constexpr float kPianoKeyboardHeight = 80.f;
     constexpr float kScrollbarThickness = 8.f;
 
     // Fixed span for the bottom piano - independent of roll scroll/zoom. C2–B6 is ~5 octaves of
@@ -997,11 +997,26 @@ void MidiEditor::paintPianoKeyboard(juce::Graphics& g) const
     pianoBand.addRoundedRectangle(0.f, pianoTop, pianoWidth, kPianoKeyboardHeight, radius, radius,
         false, false, true, true);
 
-    g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::BACKGROUND).asJuce());
-    g.fillPath(pianoBand);
+    // Clip everything to the rounded band so key fills don't square off the widget corners.
+    juce::Graphics::ScopedSaveState clipToBand(g);
+    g.reduceClipRegion(pianoBand);
 
-    // Real piano layout (Chordz-style): full-width white keys, shorter black keys on top, letter
-    // labels on white keys, blue highlight for pitch classes in the chord under the playhead.
+    // Recessed bed behind the keys - reads as the keyboard frame on pro plugins.
+    {
+        juce::ColourGradient bed(juce::Colour(0xFF1A1D22), 0.f, pianoTop,
+            juce::Colour(0xFF0E1014), 0.f, pianoTop + kPianoKeyboardHeight, false);
+        g.setGradientFill(bed);
+        g.fillPath(pianoBand);
+    }
+
+    // Soft inset shadow under the chord lane so the piano sits "below" the roll.
+    {
+        juce::ColourGradient topShade(juce::Colours::black.withAlpha(0.35f), 0.f, pianoTop,
+            juce::Colours::transparentBlack, 0.f, pianoTop + 6.f, false);
+        g.setGradientFill(topShade);
+        g.fillRect(juce::Rectangle<float>(0.f, pianoTop, pianoWidth, 6.f));
+    }
+
     auto whiteKeyCount = 0;
     for (int midi = kPianoMinMidiNote; midi <= kPianoMaxMidiNote; ++midi)
     {
@@ -1015,20 +1030,17 @@ void MidiEditor::paintPianoKeyboard(juce::Graphics& g) const
         return;
     }
 
+    // Small gutters between white keys so they read as separate physical keys, not one slab.
+    constexpr float kWhiteKeyGap = 1.f;
+    constexpr float kWhiteKeyBottomRadius = 2.5f;
+    constexpr float kBlackKeyBottomRadius = 2.f;
     const auto whiteKeyWidth = pianoWidth / static_cast<float>(whiteKeyCount);
-    const auto blackKeyWidth = whiteKeyWidth * 0.58f;
-    const auto blackKeyHeight = kPianoKeyboardHeight * 0.62f;
+    const auto blackKeyWidth = whiteKeyWidth * 0.55f;
+    const auto blackKeyHeight = kPianoKeyboardHeight * 0.60f;
     const auto activePitchClasses = getPlayheadChordPitchClasses();
+    const auto accent = nui::Theme::newColor(nui::Theme::ThemeColor::PRIMARY).asJuce();
 
-    // Chordz-like palette: clean white/black keys, cool blue for active chord tones.
-    const auto whiteFill = juce::Colour(0xFFF4F4F4);
-    const auto whiteBorder = juce::Colour(0xFFB8B8B8);
-    const auto blackFill = juce::Colour(0xFF1C1C1C);
-    const auto highlight = nui::Theme::newColor(nui::Theme::ThemeColor::PRIMARY).asJuce();
-    const auto labelOnWhite = juce::Colour(0xFF666666);
-    const auto labelOnHighlight = juce::Colours::white;
-
-    // White keys first (full height).
+    // --- White keys ----------------------------------------------------------
     auto whiteIndex = 0;
     for (int midi = kPianoMinMidiNote; midi <= kPianoMaxMidiNote; ++midi)
     {
@@ -1037,47 +1049,142 @@ void MidiEditor::paintPianoKeyboard(juce::Graphics& g) const
             continue;
 
         const auto x = static_cast<float>(whiteIndex) * whiteKeyWidth;
-        const auto bounds = juce::Rectangle<float>(x, pianoTop, whiteKeyWidth, kPianoKeyboardHeight);
+        const auto bounds = juce::Rectangle<float>(x + kWhiteKeyGap * 0.5f, pianoTop,
+            juce::jmax(1.f, whiteKeyWidth - kWhiteKeyGap), kPianoKeyboardHeight - 1.f);
         const auto isActive = activePitchClasses[static_cast<std::size_t>(pc)];
 
-        g.setColour(isActive ? highlight : whiteFill);
-        g.fillRect(bounds);
-        g.setColour(isActive ? highlight.darker(0.15f) : whiteBorder);
-        g.drawRect(bounds, 1.f);
+        juce::Path keyPath;
+        keyPath.addRoundedRectangle(bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight(),
+            kWhiteKeyBottomRadius, kWhiteKeyBottomRadius, false, false, true, true);
 
-        // Letter at the bottom of the key (C D E F G A B) - same idea as Chordz.
+        if (isActive)
+        {
+            // Luminous vertical wash - brighter near the top lip like a lit key.
+            juce::ColourGradient fill(accent.brighter(0.28f), 0.f, bounds.getY(),
+                accent.darker(0.18f), 0.f, bounds.getBottom(), false);
+            g.setGradientFill(fill);
+            g.fillPath(keyPath);
+
+            // Soft outer glow so active keys "lift" off the bed.
+            g.setColour(accent.withAlpha(0.35f));
+            g.strokePath(keyPath, juce::PathStrokeType(2.5f));
+        }
+        else
+        {
+            // Ivory body: cool top highlight → slightly warmer body → soft foot shadow.
+            juce::ColourGradient body(juce::Colour(0xFFFAFAFC), 0.f, bounds.getY(),
+                juce::Colour(0xFFE4E6EA), 0.f, bounds.getBottom(), false);
+            body.addColour(0.72, juce::Colour(0xFFEFF0F3));
+            g.setGradientFill(body);
+            g.fillPath(keyPath);
+
+            // Left specular edge + right contact shadow (cheap 3D bevel).
+            g.setColour(juce::Colours::white.withAlpha(0.55f));
+            g.fillRect(juce::Rectangle<float>(bounds.getX(), bounds.getY() + 1.f, 1.f, bounds.getHeight() - 3.f));
+            g.setColour(juce::Colours::black.withAlpha(0.08f));
+            g.fillRect(juce::Rectangle<float>(bounds.getRight() - 1.f, bounds.getY() + 1.f, 1.f, bounds.getHeight() - 3.f));
+
+            // Front lip - darker strip at the bottom of the key face.
+            g.setColour(juce::Colours::black.withAlpha(0.06f));
+            g.fillRect(juce::Rectangle<float>(bounds.getX() + 1.f, bounds.getBottom() - 4.f,
+                bounds.getWidth() - 2.f, 3.f));
+        }
+
+        // Key outline
+        g.setColour(isActive ? accent.darker(0.25f).withAlpha(0.9f) : juce::Colour(0xFF9A9DA3).withAlpha(0.85f));
+        g.strokePath(keyPath, juce::PathStrokeType(0.8f));
+
+        // Letter at the bottom of the key face (C D E F G A B).
         const auto label = kNoteNames[static_cast<std::size_t>(pc)];
-        const auto labelBounds = bounds.withTrimmedTop(kPianoKeyboardHeight * 0.55f).reduced(1.f, 2.f);
+        const auto labelBounds = bounds.withTrimmedTop(kPianoKeyboardHeight * 0.58f).reduced(1.f, 3.f);
         g.setFont(nui::Theme::newFont(nui::Theme::REGULAR, nui::Theme::SMALL));
-        g.setColour(isActive ? labelOnHighlight : labelOnWhite);
+        if (isActive)
+        {
+            // Soft shadow under the glyph so it stays legible on bright blue.
+            g.setColour(juce::Colours::black.withAlpha(0.25f));
+            g.drawText(label, labelBounds.translated(0.f, 0.5f), juce::Justification::centredBottom, false);
+            g.setColour(juce::Colours::white.withAlpha(0.95f));
+        }
+        else
+        {
+            g.setColour(juce::Colour(0xFF6A6E76));
+        }
         g.drawText(label, labelBounds, juce::Justification::centredBottom, false);
 
         ++whiteIndex;
     }
 
-    // Black keys on top, centred on the seam between neighbouring white keys.
+    // --- Black keys (drawn after whites so they sit on top) ------------------
     whiteIndex = 0;
     for (int midi = kPianoMinMidiNote; midi <= kPianoMaxMidiNote; ++midi)
     {
         const auto pc = midi % 12;
         if (kIsBlackKey[static_cast<std::size_t>(pc)])
         {
-            // whiteIndex is the count of white keys to the left of this black key - the seam sits
-            // at whiteIndex * whiteKeyWidth.
-            const auto x = static_cast<float>(whiteIndex) * whiteKeyWidth - blackKeyWidth * 0.5f;
-            const auto bounds = juce::Rectangle<float>(x, pianoTop, blackKeyWidth, blackKeyHeight);
+            // whiteIndex is the count of white keys to the left - seam at whiteIndex * whiteKeyWidth.
+            const auto seamX = static_cast<float>(whiteIndex) * whiteKeyWidth;
+            const auto bounds = juce::Rectangle<float>(seamX - blackKeyWidth * 0.5f, pianoTop,
+                blackKeyWidth, blackKeyHeight);
             const auto isActive = activePitchClasses[static_cast<std::size_t>(pc)];
 
-            g.setColour(isActive ? highlight.brighter(0.12f) : blackFill);
-            g.fillRoundedRectangle(bounds, 1.5f);
-            g.setColour(isActive ? highlight.darker(0.2f) : juce::Colour(0xFF000000));
-            g.drawRoundedRectangle(bounds, 1.5f, 1.f);
+            // Drop shadow under the black key - grounds it on the white keys.
+            {
+                juce::Path shadow;
+                const auto shadowBounds = bounds.translated(0.f, 1.5f).expanded(0.5f, 1.f);
+                shadow.addRoundedRectangle(shadowBounds.getX(), shadowBounds.getY(),
+                    shadowBounds.getWidth(), shadowBounds.getHeight(),
+                    kBlackKeyBottomRadius, kBlackKeyBottomRadius, false, false, true, true);
+                g.setColour(juce::Colours::black.withAlpha(0.45f));
+                g.fillPath(shadow);
+            }
+
+            juce::Path keyPath;
+            keyPath.addRoundedRectangle(bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight(),
+                kBlackKeyBottomRadius, kBlackKeyBottomRadius, false, false, true, true);
+
+            if (isActive)
+            {
+                juce::ColourGradient fill(accent.brighter(0.35f), 0.f, bounds.getY(),
+                    accent.darker(0.1f), 0.f, bounds.getBottom(), false);
+                g.setGradientFill(fill);
+                g.fillPath(keyPath);
+
+                g.setColour(accent.brighter(0.5f).withAlpha(0.5f));
+                g.strokePath(keyPath, juce::PathStrokeType(1.2f));
+            }
+            else
+            {
+                // Glossy ebony: bright top face → deep body.
+                juce::ColourGradient body(juce::Colour(0xFF3A3D44), 0.f, bounds.getY(),
+                    juce::Colour(0xFF0A0B0D), 0.f, bounds.getBottom(), false);
+                body.addColour(0.18, juce::Colour(0xFF2A2C32));
+                body.addColour(0.55, juce::Colour(0xFF141518));
+                g.setGradientFill(body);
+                g.fillPath(keyPath);
+
+                // Narrow top specular highlight.
+                g.setColour(juce::Colours::white.withAlpha(0.14f));
+                g.fillRoundedRectangle(bounds.reduced(1.5f, 0.f).withHeight(3.5f)
+                    .withY(bounds.getY() + 1.f), 1.f);
+
+                // Side bevels.
+                g.setColour(juce::Colours::white.withAlpha(0.08f));
+                g.fillRect(juce::Rectangle<float>(bounds.getX() + 0.5f, bounds.getY() + 4.f, 1.f, bounds.getHeight() - 8.f));
+                g.setColour(juce::Colours::black.withAlpha(0.5f));
+                g.fillRect(juce::Rectangle<float>(bounds.getRight() - 1.5f, bounds.getY() + 4.f, 1.f, bounds.getHeight() - 8.f));
+            }
+
+            g.setColour(isActive ? accent.darker(0.3f) : juce::Colours::black.withAlpha(0.9f));
+            g.strokePath(keyPath, juce::PathStrokeType(0.9f));
             continue;
         }
         ++whiteIndex;
     }
 
-    g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::BORDER).asJuce());
+    // Outer frame on top of everything.
+    g.setColour(juce::Colours::black.withAlpha(0.55f));
+    g.strokePath(pianoBand, juce::PathStrokeType(1.2f));
+    g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::BORDER).asJuce().withAlpha(0.7f));
     g.strokePath(pianoBand, juce::PathStrokeType(1.f));
 }
 
