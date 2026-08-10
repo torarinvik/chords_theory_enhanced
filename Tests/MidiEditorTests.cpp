@@ -23,10 +23,11 @@ namespace
 {
     // Mirrors the fixed default-state constants declared in MidiEditor.cpp's anonymous namespace
     // (kGutterWidth, kRulerHeight, kDefaultPixelsPerBeat, kDefaultRowHeight, kInitialTopMidiNote,
-    // kMaxMidiNote) - a freshly constructed, unzoomed/unscrolled editor's coordinate math is fully
-    // deterministic from these, same "hardcode the widget's known fixed layout" precedent
-    // ProgressionSlotView's own tests once used (its {40, 28} for an 80x56 slot's centre). Kept in
-    // sync manually; if MidiEditor.cpp's own defaults ever change, update these too.
+    // kMaxMidiNote, kPianoKeyboardHeight) - a freshly constructed, unzoomed/unscrolled editor's
+    // coordinate math is fully deterministic from these, same "hardcode the widget's known fixed
+    // layout" precedent ProgressionSlotView's own tests once used (its {40, 28} for an 80x56
+    // slot's centre). Kept in sync manually; if MidiEditor.cpp's own defaults ever change, update
+    // these too.
     constexpr float kGutterWidth = 40.f;
     constexpr float kRulerHeight = 24.f;
     constexpr float kPixelsPerBeat = 80.f;
@@ -34,6 +35,7 @@ namespace
     constexpr int kInitialTopMidiNote = 67;
     constexpr float kScrollbarThickness = 8.f;
     constexpr float kChordLaneHeight = 28.f;
+    constexpr float kPianoKeyboardHeight = 80.f; // real bottom piano strip (see MidiEditor.cpp)
     constexpr double kBeatsPerBar = 4.0; // a dropped chord's default length/snap cell is a full bar
 
     float beatToX(double beat) { return kGutterWidth + static_cast<float>(beat) * kPixelsPerBeat; }
@@ -277,7 +279,7 @@ TEST_CASE("MidiEditor: a chord dropped on a partially-occupied beat takes only t
     // There's no chord-block resize gesture (only move) - so the way to reach a genuine partial
     // overlap is to drag the existing block half a bar (2 beats) to the right, so it now straddles
     // bar cells [0,4) and [4,8), leaving the first half of [0,4) free for the next drop to claim.
-    const auto chordLaneY = 400.f - kScrollbarThickness - kChordLaneHeight + 4.f;
+    const auto chordLaneY = 400.f - kScrollbarThickness - kPianoKeyboardHeight - kChordLaneHeight + 4.f;
     const juce::Point<float> start { beatToX(0.0) + 1.f, chordLaneY };
     const juce::Point<float> dragged { start.x + kPixelsPerBeat * 2.f, chordLaneY };
     editor.mouseDown(makeMouseEvent(editor, start));
@@ -321,7 +323,7 @@ TEST_CASE("MidiEditor: clicking a chord-lane label previews its notes without mo
     editor.addChordAtBeat(0.0, chord, testSlot(chord));
     const auto contentChangedAfterAdd = listener.contentChangedCount;
 
-    const auto chordLaneY = 400.f - kScrollbarThickness - kChordLaneHeight + 4.f;
+    const auto chordLaneY = 400.f - kScrollbarThickness - kPianoKeyboardHeight - kChordLaneHeight + 4.f;
     const juce::Point<float> clickPos { beatToX(0.0) + 1.f, chordLaneY };
     editor.mouseDown(makeMouseEvent(editor, clickPos));
     editor.mouseUp(makeMouseEvent(editor, clickPos));
@@ -349,7 +351,7 @@ TEST_CASE("MidiEditor: dragging a chord-lane label does not preview, it moves", 
     editor.addChordAtBeat(0.0, getTestChord(), testSlot(getTestChord()));
     const auto contentChangedAfterAdd = listener.contentChangedCount;
 
-    const auto chordLaneY = 400.f - kScrollbarThickness - kChordLaneHeight + 4.f;
+    const auto chordLaneY = 400.f - kScrollbarThickness - kPianoKeyboardHeight - kChordLaneHeight + 4.f;
     const juce::Point<float> start { beatToX(0.0) + 1.f, chordLaneY };
     const juce::Point<float> dragged { start.x + kPixelsPerBeat * 2.f, chordLaneY };
     editor.mouseDown(makeMouseEvent(editor, start));
@@ -467,6 +469,40 @@ TEST_CASE("MidiEditor: a manually-resized loop no longer moves when content chan
     CHECK(editor.getLoopEndBeat() == Catch::Approx(5.0));
 }
 
+TEST_CASE("MidiEditor::getPlayheadChordPitchClasses reflects notes under the loop-start playhead", "[MidiEditor]")
+{
+    MidiEditor editor("test-midi-editor");
+    editor.setBounds(0, 0, 800, 400);
+
+    // Empty editor → no highlights.
+    auto empty = editor.getPlayheadChordPitchClasses();
+    for (bool on : empty)
+        CHECK_FALSE(on);
+
+    const auto& chord = getTestChord(); // C major triad: C, E, G
+    editor.addChordAtBeat(0.0, chord, testSlot(chord));
+
+    // Stopped playhead sits at loop start (beat 0) → first chord's pitch classes.
+    auto active = editor.getPlayheadChordPitchClasses();
+    CHECK(active[0]);  // C
+    CHECK(active[4]);  // E
+    CHECK(active[7]);  // G
+    for (int pc = 0; pc < 12; ++pc)
+    {
+        if (pc == 0 || pc == 4 || pc == 7)
+            continue;
+        CHECK_FALSE(active[static_cast<std::size_t>(pc)]);
+    }
+
+    // Second chord at bar 1 - still parked at loop start, so still the first chord.
+    const auto& chordV = ChordDatabase::getInstance().get(Key::C, Scale::Major).degrees[4].chords.front();
+    editor.addChordAtBeat(kBeatsPerBar, chordV, { Degree::V, chordV.popularityOrder });
+    active = editor.getPlayheadChordPitchClasses();
+    CHECK(active[0]);
+    CHECK(active[4]);
+    CHECK(active[7]);
+}
+
 TEST_CASE("MidiEditor::startPlayback on an empty editor is a no-op", "[MidiEditor]")
 {
     ProgressionPlayer player;
@@ -528,7 +564,7 @@ TEST_CASE("MidiEditor: double-clicking the ruler zooms/scrolls so the loop exact
     // - at the old default zoom (80px/beat) that same screen x would land around beat 4.7, well
     // outside the block, so this only passes if the zoom genuinely took effect.
     constexpr float kExpectedPixelsPerBeat = (800.f - kGutterWidth - kScrollbarThickness) / 4.f;
-    const auto chordLaneY = 400.f - kScrollbarThickness - kChordLaneHeight + 4.f;
+    const auto chordLaneY = 400.f - kScrollbarThickness - kPianoKeyboardHeight - kChordLaneHeight + 4.f;
     const juce::Point<float> midBarPos { kGutterWidth + 2.f * kExpectedPixelsPerBeat, chordLaneY };
     editor.mouseDoubleClick(makeMouseEvent(editor, midBarPos));
 

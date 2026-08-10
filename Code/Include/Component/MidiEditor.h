@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <optional>
 #include <vector>
 
@@ -14,15 +15,18 @@ namespace component
 {
 
 // A piano-roll MIDI note editor: a scrollable/zoomable pitch grid (pitch-labeled gutter on the
-// left, beat/bar ruler on top) with a "chord lane" strip along the bottom. Dropping a ChordCard's
-// exported .mid file onto it (see AppLayout's in-flight-drag-map resolution, the same mechanism
-// ProgressionSlotView used) adds a labeled chord block to the lane and splits the chord into
-// individually movable/resizable note blocks in the grid above, via addChordAtBeat(). Owns its own
-// in-memory note/chord-block state - getState()/restoreState() bridge that to/from
-// theory::MidiEditorState, the pure-data shape Theory::SessionState (DAW project persistence) and
-// Theory::MidiExporter (exact-content drag export) both consume; ProgressionEditor is the only
-// other component that reaches into this class directly (for presets - see its own loadPreset/
-// getPopulatedSlots).
+// left, beat/bar ruler on top), a "chord lane" strip under the grid, and a horizontal key strip
+// under that. The bottom strip is a real multi-octave piano (white keys + overlapping black keys,
+// letter labels, Chordz-style); chord-under-playhead pitch classes highlight blue by default
+// (later modes can overlay scales on the same strip). The left gutter stays a piano-roll pitch
+// ruler and is independent of the bottom piano. Dropping a
+// ChordCard's exported .mid file onto it (see AppLayout's in-flight-drag-map resolution) adds a
+// labeled chord block to the lane and splits the chord into individually movable/resizable note
+// blocks in the grid above, via addChordAtBeat(). Owns its own in-memory note/chord-block state -
+// getState()/restoreState() bridge that to/from theory::MidiEditorState, the pure-data shape
+// Theory::SessionState (DAW project persistence) and Theory::MidiExporter (exact-content drag
+// export) both consume; ProgressionEditor is the only other component that reaches into this class
+// directly (for presets - see its own loadPreset/getPopulatedSlots).
 //
 // Hand-paints everything itself (no juce::Viewport) - there's no existing precedent in this
 // codebase or nierika_dsp for a Viewport scrolling on both axes with a frozen gutter/ruler synced
@@ -118,6 +122,11 @@ public:
     [[nodiscard]] double getLoopStartBeat() const { return _loopStartBeat; }
     [[nodiscard]] double getLoopEndBeat() const { return _loopEndBeat; }
 
+    // Pitch classes (0-11) belonging to whatever is sounding under the UI playhead position -
+    // live piano-roll notes active at that beat, or the chord block covering it when notes have
+    // been deleted. Used by the bottom mini-piano highlight (and unit-tested directly).
+    [[nodiscard]] std::array<bool, 12> getPlayheadChordPitchClasses() const;
+
     void addListener(Listener* listener);
     void removeListener(Listener* listener);
 
@@ -173,6 +182,7 @@ private:
     void paintGutter(juce::Graphics&) const;
     void paintLoopRegion(juce::Graphics&) const;
     void paintPlayhead(juce::Graphics&) const;
+    void paintPianoKeyboard(juce::Graphics&) const;
 
     // coordinate math
     [[nodiscard]] float beatToX(double beat) const noexcept;
@@ -180,6 +190,9 @@ private:
     [[nodiscard]] float pitchToY(int midiNote) const noexcept;
     [[nodiscard]] int yToPitch(float y) const noexcept;
     [[nodiscard]] static double snapBeat(double beat) noexcept;
+
+    // Same beat the playhead line uses (live while playing, else loop start).
+    [[nodiscard]] double getUiPlayheadBeat() const;
 
     // hit-testing
     [[nodiscard]] int hitTestNote(juce::Point<float>) const;
