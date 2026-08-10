@@ -25,13 +25,17 @@ SettingsWindow::SettingsWindow(const std::string& identifier, nlayout::WindowsMa
 
     AppLocalisation::getChangeBroadcaster().addChangeListener(this);
 
-    _layout.setGap(24.f);
+    _layout.setGap(20.f);
     _layout.setDisplayGrid(false);
-    _layout.init({ 1 }, { 1 });
+    _layout.init({ 1, 1, 1 }, { 1 });
 
     _layout.setFixedRowHeight(0, 42.f);
+    _layout.setFixedRowHeight(1, 120.f);
+    _layout.setFixedRowHeight(2, 90.f);
 
     _layout.addComponent(_title, 0, 0, 1, 1);
+    _layout.addComponent(_visualSettings, 1, 0, 1, 1);
+    _layout.addComponent(_languageSettings, 2, 0, 1, 1);
 
     _titleIcon.toFront(false);
     _closeButton.toFront(false);
@@ -97,7 +101,7 @@ void SettingsWindow::resized()
 juce::Rectangle<int> SettingsWindow::getCardBounds()
 {
     constexpr int maxCardWidth = 650;
-    constexpr int maxCardHeight = 400;
+    constexpr int maxCardHeight = 480;
 
     const auto margin = juce::jmax(32, juce::jmin(getWidth(), getHeight()) / 8);
     const auto available = getLocalBounds().reduced(margin);

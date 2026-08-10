@@ -5,9 +5,13 @@ namespace
     const char* SHOW_STANDALONE_TITLE_KEY = "showStandaloneTitle";
     const char* THEME_MODE_KEY = "themeMode";
     const char* LANGUAGE_KEY = "language";
+    const char* NOTE_TEXT_COLOUR_KEY = "noteTextColour";
 
     const char* THEME_MODE_LIGHT = "light";
     const char* THEME_MODE_DARK = "dark";
+
+    // Matches the previous hard-coded ivory-key label grey in MidiEditor.
+    constexpr juce::uint32 kDefaultNoteTextColourArgb = 0xFF6A6E76;
 
     juce::String getAppName()
     {
@@ -73,6 +77,30 @@ void AppSettings::setLanguage(const std::string& languageCode)
 {
     _properties.setValue(LANGUAGE_KEY, juce::String(languageCode));
     _properties.save();
+    getChangeBroadcaster().sendChangeMessage();
+}
+
+juce::Colour AppSettings::getNoteTextColour() const
+{
+    const auto stored = _properties.getValue(NOTE_TEXT_COLOUR_KEY, {});
+    if (stored.isEmpty())
+        return juce::Colour(kDefaultNoteTextColourArgb);
+
+    // Stored as 8-digit hex ARGB (no leading #), same form Colour::toDisplayString(true) uses.
+    return juce::Colour::fromString(stored.startsWithChar('#') ? stored : ("#" + stored));
+}
+
+void AppSettings::setNoteTextColour(juce::Colour colour)
+{
+    _properties.setValue(NOTE_TEXT_COLOUR_KEY, colour.toDisplayString(true));
+    _properties.save();
+    getChangeBroadcaster().sendChangeMessage();
+}
+
+juce::ChangeBroadcaster& AppSettings::getChangeBroadcaster()
+{
+    static juce::ChangeBroadcaster broadcaster;
+    return broadcaster;
 }
 
 AppSettings& AppSettings::getInstance()

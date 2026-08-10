@@ -2,6 +2,9 @@
 
 #include <nierika_dsp/nierika_dsp.h>
 
+#include "Component/LanguageSettings.h"
+#include "Component/VisualSettings.h"
+
 namespace component
 {
 
@@ -31,6 +34,9 @@ private:
     nelement::Text _title { "settings-title", "", "Settings" };
     nelement::SVGButton _titleIcon { "settings-title-icon", nui::Icons::getGear() };
     nelement::SVGButton _closeButton { "settings-close-button", nui::Icons::getCross() };
+
+    VisualSettings _visualSettings { "settings-visual" };
+    LanguageSettings _languageSettings { "settings-language" };
 
     nlayout::GridLayout<nui::Component> _layout { *this };
 

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <limits>
 
+#include "AppSettings.h"
 #include "Theory/NoteConvertor.h"
 
 namespace component
@@ -51,7 +52,20 @@ namespace
     constexpr float kClickMaxDistance = 6.f;
 
     constexpr std::array<bool, 12> kIsBlackKey { false,true,false,true,false,false,true,false,true,false,true,false };
+    // C-major spellings (sharps on black keys) - same vocabulary as a C-major keyboard diagram.
     const std::array<juce::String, 12> kNoteNames { "C","C#","D","D#","E","F","F#","G","G#","A","A#","B" };
+
+    // Settings note-text colour, auto-brightened on ebony keys when the pick is too dark to read.
+    juce::Colour noteTextColourForKey(bool onBlackKey, bool isActive)
+    {
+        if (isActive)
+            return juce::Colours::white.withAlpha(0.95f);
+
+        auto colour = AppSettings::getInstance().getNoteTextColour();
+        if (onBlackKey && colour.getBrightness() < 0.55f)
+            colour = colour.withBrightness(0.78f);
+        return colour;
+    }
 }
 
 MidiEditor::MidiEditor(const std::string& identifier, audio::ProgressionPlayer* progressionPlayer):
@@ -77,6 +91,7 @@ MidiEditor::MidiEditor(const std::string& identifier, audio::ProgressionPlayer* 
     _vScrollBar.setColour(juce::ScrollBar::thumbColourId, nui::Theme::newColor(nui::Theme::ThemeColor::BACKGROUND).asJuce().withAlpha(0.5f));
 
     addMouseListener(this, true);
+    AppSettings::getChangeBroadcaster().addChangeListener(this);
 }
 
 MidiEditor::~MidiEditor()
@@ -87,8 +102,17 @@ MidiEditor::~MidiEditor()
     if (_progressionPlayer != nullptr)
         _progressionPlayer->stop();
 
+    AppSettings::getChangeBroadcaster().removeChangeListener(this);
     _hScrollBar.removeListener(this);
     _vScrollBar.removeListener(this);
+}
+
+void MidiEditor::changeListenerCallback(juce::ChangeBroadcaster* source)
+{
+    Component::changeListenerCallback(source);
+
+    if (source == &AppSettings::getChangeBroadcaster())
+        repaint();
 }
 
 void MidiEditor::paint(juce::Graphics& g)
@@ -912,19 +936,22 @@ void MidiEditor::paintGutter(juce::Graphics& g) const
     g.drawVerticalLine(0, _contentArea.getY(), _contentArea.getBottom());
     g.drawVerticalLine(static_cast<int>(kGutterWidth), _contentArea.getY(), _contentArea.getBottom());
 
-    g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::BACKGROUND).asJuce()); // dark text over the light #D9D9D9 white-key cells
     g.setFont(nui::Theme::newFont(nui::Theme::REGULAR, nui::Theme::SMALL));
 
     for (int midiNote = kMinMidiNote; midiNote <= kMaxMidiNote; ++midiNote)
     {
-        if (kIsBlackKey[static_cast<std::size_t>(midiNote % 12)])
-            continue;
-
+        const auto pc = midiNote % 12;
+        const auto isBlack = kIsBlackKey[static_cast<std::size_t>(pc)];
         const auto y = pitchToY(midiNote);
         if (y + _rowHeight < _contentArea.getY() || y > _contentArea.getBottom())
             continue;
 
-        const auto label = kNoteNames[static_cast<std::size_t>(midiNote % 12)] + juce::String(midiNote / 12 - 1);
+        // White keys: C4-style. Black keys: C-major sharp names (C#, D#, …) so both match the
+        // bottom piano's vocabulary.
+        const auto label = isBlack
+            ? kNoteNames[static_cast<std::size_t>(pc)]
+            : kNoteNames[static_cast<std::size_t>(pc)] + juce::String(midiNote / 12 - 1);
+        g.setColour(noteTextColourForKey(isBlack, false));
         g.drawText(label, juce::Rectangle<float>(2.f, y, kGutterWidth - 4.f, _rowHeight), juce::Justification::centred, true);
     }
 }
@@ -1098,17 +1125,14 @@ void MidiEditor::paintPianoKeyboard(juce::Graphics& g) const
         const auto label = kNoteNames[static_cast<std::size_t>(pc)];
         const auto labelBounds = bounds.withTrimmedTop(kPianoKeyboardHeight * 0.58f).reduced(1.f, 3.f);
         g.setFont(nui::Theme::newFont(nui::Theme::REGULAR, nui::Theme::SMALL));
+        const auto labelColour = noteTextColourForKey(false, isActive);
         if (isActive)
         {
             // Soft shadow under the glyph so it stays legible on bright blue.
             g.setColour(juce::Colours::black.withAlpha(0.25f));
             g.drawText(label, labelBounds.translated(0.f, 0.5f), juce::Justification::centredBottom, false);
-            g.setColour(juce::Colours::white.withAlpha(0.95f));
         }
-        else
-        {
-            g.setColour(juce::Colour(0xFF6A6E76));
-        }
+        g.setColour(labelColour);
         g.drawText(label, labelBounds, juce::Justification::centredBottom, false);
 
         ++whiteIndex;
@@ -1176,6 +1200,19 @@ void MidiEditor::paintPianoKeyboard(juce::Graphics& g) const
 
             g.setColour(isActive ? accent.darker(0.3f) : juce::Colours::black.withAlpha(0.9f));
             g.strokePath(keyPath, juce::PathStrokeType(0.9f));
+
+            // C-major sharp names on black keys (C#, D#, F#, G#, A#).
+            const auto label = kNoteNames[static_cast<std::size_t>(pc)];
+            const auto labelBounds = bounds.withTrimmedTop(bounds.getHeight() * 0.42f).reduced(0.5f, 2.f);
+            g.setFont(nui::Theme::newFont(nui::Theme::REGULAR, nui::Theme::SMALL));
+            const auto labelColour = noteTextColourForKey(true, isActive);
+            if (isActive)
+            {
+                g.setColour(juce::Colours::black.withAlpha(0.3f));
+                g.drawText(label, labelBounds.translated(0.f, 0.5f), juce::Justification::centredBottom, true);
+            }
+            g.setColour(labelColour);
+            g.drawText(label, labelBounds, juce::Justification::centredBottom, true);
             continue;
         }
         ++whiteIndex;

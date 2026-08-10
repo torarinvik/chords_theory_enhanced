@@ -6,6 +6,7 @@ countries: fr be mc ch lu
 "visual_settings_theme_label" = "Thème"
 "visual_settings_dark_theme" = "Sombre"
 "visual_settings_light_theme" = "Clair"
+"visual_settings_note_text_colour_label" = "Couleur du texte des notes"
 "language_settings_title" = "LANGUE"
 "chord_card_tooltip" = "Cliquez pour préécouter. Glissez vers une piste DAW ou un emplacement de progression."
 "chord_card_voicing_button_tooltip" = "Choisir une autre position ou inversion"

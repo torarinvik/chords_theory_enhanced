@@ -6,6 +6,7 @@ countries: es mx ar cl co pe
 "visual_settings_theme_label" = "Tema"
 "visual_settings_dark_theme" = "Oscuro"
 "visual_settings_light_theme" = "Claro"
+"visual_settings_note_text_colour_label" = "Color del texto de notas"
 "language_settings_title" = "IDIOMA"
 "chord_card_tooltip" = "Haz clic para preescuchar. Arrastra a una pista del DAW o a una casilla de progresión."
 "chord_card_voicing_button_tooltip" = "Elegir otra inversión o voicing"

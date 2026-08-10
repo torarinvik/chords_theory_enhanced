@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_data_structures/juce_data_structures.h>
+#include <juce_graphics/juce_graphics.h>
 #include <nierika_dsp/nierika_dsp.h>
 
 class AppSettings
@@ -18,6 +19,14 @@ public:
 
     [[nodiscard]] std::string getLanguage() const;
     void setLanguage(const std::string& languageCode);
+
+    // Colour used for piano / pitch note letter labels (white + black keys). Default is a mid grey
+    // that reads on ivory keys; black keys auto-brighten dark choices for legibility when painting.
+    [[nodiscard]] juce::Colour getNoteTextColour() const;
+    void setNoteTextColour(juce::Colour colour);
+
+    // Fired after any setter that should refresh UI (theme is also announced via nui::Theme).
+    static juce::ChangeBroadcaster& getChangeBroadcaster();
 
     static AppSettings& getInstance();
 

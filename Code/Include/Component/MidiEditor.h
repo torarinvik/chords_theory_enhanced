@@ -80,6 +80,7 @@ public:
 
     void paint(juce::Graphics&) override;
     void resized() override;
+    void changeListenerCallback(juce::ChangeBroadcaster* source) override;
 
     // Snaps to the whole-bar (4-beat) cell startBeat falls in, then splits chord into N note
     // blocks (via theory::NoteConvertor::voiceChordCloseToMiddleC) plus one chord-lane block
