@@ -1432,23 +1432,24 @@ void MidiEditor::paintPianoKeyboard(juce::Graphics& g) const
         if (!(isChord && isScale))
             return;
 
-        const auto diameter = isBlackKey ? 5.5f : 6.5f;
-        const auto gap = 3.f;
-        const auto totalW = diameter * 2.f + gap;
-        const auto cy = bounds.getBottom() - (isBlackKey ? 9.f : 14.f);
-        auto x = bounds.getCentreX() - totalW * 0.5f;
+        const auto diameter = isBlackKey ? 7.5f : 9.f;
+        const auto gap = 2.5f;
+        const auto totalH = diameter * 2.f + gap;
+        // Stack above the note letter, centred horizontally.
+        const auto cx = bounds.getCentreX();
+        auto y = bounds.getBottom() - (isBlackKey ? 11.f : 18.f) - totalH;
 
         const auto drawDot = [&](juce::Colour colour)
         {
-            const auto dot = juce::Rectangle<float>(x, cy - diameter * 0.5f, diameter, diameter);
+            const auto dot = juce::Rectangle<float>(cx - diameter * 0.5f, y, diameter, diameter);
             g.setColour(colour);
             g.fillEllipse(dot);
             g.setColour(juce::Colours::white.withAlpha(isBlackKey ? 0.55f : 0.35f));
             g.drawEllipse(dot, 0.9f);
-            x += diameter + gap;
+            y += diameter + gap;
         };
 
-        // Fixed order: scale (left) then chord (right).
+        // Fixed order: scale (top) then chord (bottom).
         drawDot(scaleColour);
         drawDot(chordColour);
     };
