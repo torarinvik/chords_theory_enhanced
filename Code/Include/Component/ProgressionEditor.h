@@ -5,6 +5,7 @@
 
 #include <nierika_dsp/nierika_dsp.h>
 
+#include "Audio/InputMidiNoteTracker.h"
 #include "Audio/ProgressionPlayer.h"
 #include "Component/MidiEditor.h"
 #include "Component/ProgressionDragHandle.h"
@@ -54,9 +55,12 @@ public:
         virtual void onChordBlockPreviewRequested(const std::vector<int>& midiNotes) = 0;
     };
 
-    // progressionPlayer is nullable (defaults to null so any test constructing without one keeps
-    // working) - forwarded straight into the owned MidiEditor.
-    ProgressionEditor(const std::string& identifier, ChordResolver chordResolver, audio::ProgressionPlayer* progressionPlayer = nullptr);
+    // progressionPlayer / inputMidiNoteTracker are nullable (tests may omit them) - forwarded
+    // into the owned MidiEditor for playback and live MIDI-input piano highlighting.
+    ProgressionEditor(const std::string& identifier,
+                      ChordResolver chordResolver,
+                      audio::ProgressionPlayer* progressionPlayer = nullptr,
+                      audio::InputMidiNoteTracker* inputMidiNoteTracker = nullptr);
     ~ProgressionEditor() override;
 
     void paint(juce::Graphics&) override;

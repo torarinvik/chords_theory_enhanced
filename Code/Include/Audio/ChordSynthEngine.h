@@ -6,6 +6,7 @@
 #include <juce_events/juce_events.h>
 #include <nierika_dsp/nierika_dsp.h>
 
+#include "Audio/InputMidiNoteTracker.h"
 #include "Audio/MasterBus.h"
 #include "Audio/MasterBusState.h"
 #include "Audio/ProgressionPlayer.h"
@@ -63,6 +64,10 @@ public:
     // waveform FIFOs above.
     [[nodiscard]] ProgressionPlayer& getProgressionPlayer() { return _progressionPlayer; }
 
+    // Host MIDI note-on/off state for piano highlighting (updated before progression/preview inject).
+    [[nodiscard]] InputMidiNoteTracker& getInputMidiNoteTracker() { return _inputMidiNoteTracker; }
+    [[nodiscard]] const InputMidiNoteTracker& getInputMidiNoteTracker() const { return _inputMidiNoteTracker; }
+
 private:
     void timerCallback() override;
     void releaseActiveNotes();
@@ -85,6 +90,7 @@ private:
     std::vector<int> _activeNotes;
     double _sampleRate = 44100.0;
     ProgressionPlayer _progressionPlayer;
+    InputMidiNoteTracker _inputMidiNoteTracker;
 
     MasterBusState _masterBusState;
     MasterBus _masterBus;

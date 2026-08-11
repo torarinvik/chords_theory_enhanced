@@ -8,6 +8,7 @@ namespace
     const char* NOTE_TEXT_COLOUR_KEY = "noteTextColour";
     const char* SCALE_HIGHLIGHT_COLOUR_KEY = "scaleHighlightColour";
     const char* CHORD_HIGHLIGHT_COLOUR_KEY = "chordHighlightColour";
+    const char* MIDI_INPUT_HIGHLIGHT_COLOUR_KEY = "midiInputHighlightColour";
 
     const char* THEME_MODE_LIGHT = "light";
     const char* THEME_MODE_DARK = "dark";
@@ -18,6 +19,8 @@ namespace
     constexpr juce::uint32 kDefaultScaleHighlightColourArgb = 0xFF3D9B6E;
     // Matches Theme PRIMARY blue used previously for chord-tone piano fill.
     constexpr juce::uint32 kDefaultChordHighlightColourArgb = 0xFF3A607E;
+    // Warm amber for live MIDI input key fill (reads on ivory + ebony).
+    constexpr juce::uint32 kDefaultMidiInputHighlightColourArgb = 0xFFE09B2D;
 
     juce::String getAppName()
     {
@@ -131,6 +134,22 @@ juce::Colour AppSettings::getChordHighlightColour() const
 void AppSettings::setChordHighlightColour(juce::Colour colour)
 {
     _properties.setValue(CHORD_HIGHLIGHT_COLOUR_KEY, colour.toDisplayString(true));
+    _properties.save();
+    getChangeBroadcaster().sendChangeMessage();
+}
+
+juce::Colour AppSettings::getMidiInputHighlightColour() const
+{
+    const auto stored = _properties.getValue(MIDI_INPUT_HIGHLIGHT_COLOUR_KEY, {});
+    if (stored.isEmpty())
+        return juce::Colour(kDefaultMidiInputHighlightColourArgb);
+
+    return juce::Colour::fromString(stored.startsWithChar('#') ? stored : ("#" + stored));
+}
+
+void AppSettings::setMidiInputHighlightColour(juce::Colour colour)
+{
+    _properties.setValue(MIDI_INPUT_HIGHLIGHT_COLOUR_KEY, colour.toDisplayString(true));
     _properties.save();
     getChangeBroadcaster().sendChangeMessage();
 }

@@ -40,6 +40,7 @@ private:
         NoteText,
         ScaleHighlight,
         ChordHighlight,
+        MidiInputHighlight,
     };
 
     void onSelectionChanged(const std::string& componentID, int selectedIndex) override;
@@ -59,6 +60,9 @@ private:
 
     nelement::Text _scaleHighlightColourLabel { "settings-scale-highlight-colour-label", "", juce::translate("visual_settings_scale_highlight_colour_label").toStdString() };
     ColourSwatch _scaleHighlightColourSwatch { "settings-scale-highlight-colour-swatch" };
+
+    nelement::Text _midiInputHighlightColourLabel { "settings-midi-input-highlight-colour-label", "", juce::translate("visual_settings_midi_input_highlight_colour_label").toStdString() };
+    ColourSwatch _midiInputHighlightColourSwatch { "settings-midi-input-highlight-colour-swatch" };
 
     ColourTarget _activeColourTarget = ColourTarget::NoteText;
     juce::Component::SafePointer<juce::ColourSelector> _activeColourSelector;

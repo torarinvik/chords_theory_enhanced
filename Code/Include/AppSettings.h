@@ -34,6 +34,11 @@ public:
     [[nodiscard]] juce::Colour getChordHighlightColour() const;
     void setChordHighlightColour(juce::Colour colour);
 
+    // Colour used to fully light piano keys while those MIDI notes are held from host/controller
+    // input. Defaults to a warm amber distinct from chord (blue) and scale (green) highlights.
+    [[nodiscard]] juce::Colour getMidiInputHighlightColour() const;
+    void setMidiInputHighlightColour(juce::Colour colour);
+
     // Fired after any setter that should refresh UI (theme is also announced via nui::Theme).
     static juce::ChangeBroadcaster& getChangeBroadcaster();
 

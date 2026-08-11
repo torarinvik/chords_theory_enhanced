@@ -44,6 +44,11 @@ void ChordSynthEngine::renderNextBlock(juce::AudioBuffer<float>& buffer, juce::M
     // (ProgressionPlayer::setBpm) so standalone tempo is controllable and host tempo doesn't
     // surprise-change a programmed loop rate mid-edit.
     _sharedState.hostBpm = hostBpm;
+
+    // Track external MIDI for piano highlight *before* progression/preview inject notes into the
+    // same buffer (so only host/controller input drives "live" key highlighting).
+    _inputMidiNoteTracker.processHostMidi(midiMessages);
+
     _progressionPlayer.renderNextBlock(midiMessages, numSamples, _sampleRate, _progressionPlayer.getBpm());
 
     // Advanced unconditionally, whether or not anything is currently sounding - this is what
@@ -52,6 +57,7 @@ void ChordSynthEngine::renderNextBlock(juce::AudioBuffer<float>& buffer, juce::M
     // voice re-seeds its own per-sample-stepped copy from this value at the top of every block).
     advanceFreeLfoPhase(numSamples);
 
+    // Host MIDI is already in midiMessages; this also injects UI preview notes. Synth plays both.
     _keyboardState.processNextMidiBuffer(midiMessages, startSample, numSamples, true);
     _synth.renderNextBlock(buffer, midiMessages, startSample, numSamples);
 
@@ -95,6 +101,7 @@ void ChordSynthEngine::reset()
     stopTimer();
     releaseActiveNotes();
     _progressionPlayer.stop();
+    _inputMidiNoteTracker.clear();
 }
 
 void ChordSynthEngine::timerCallback()

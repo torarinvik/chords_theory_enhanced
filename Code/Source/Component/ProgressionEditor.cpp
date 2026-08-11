@@ -14,13 +14,16 @@ namespace
     constexpr float kHeaderRowHeight = 32.f;
 }
 
-ProgressionEditor::ProgressionEditor(const std::string& identifier, ChordResolver chordResolver, audio::ProgressionPlayer* progressionPlayer):
+ProgressionEditor::ProgressionEditor(const std::string& identifier,
+                                     ChordResolver chordResolver,
+                                     audio::ProgressionPlayer* progressionPlayer,
+                                     audio::InputMidiNoteTracker* inputMidiNoteTracker):
     Component(identifier),
     _chordResolver(std::move(chordResolver)),
     _presetPicker("progression-preset-picker-wrapper"),
     _savePresetButton("progression-save-preset-button", nui::Icons::getPlus()),
     _dragHandle("progression-drag-handle"),
-    _midiEditor("progression-midi-editor", progressionPlayer)
+    _midiEditor("progression-midi-editor", progressionPlayer, inputMidiNoteTracker)
 {
     _presetPicker.addListener(this);
 

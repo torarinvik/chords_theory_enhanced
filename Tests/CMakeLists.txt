@@ -8,6 +8,7 @@ add_executable(${PROJECT_NAME}_Tests
         SessionStateSerializerTests.cpp
         ChordDegreeBrowserTests.cpp
         ChordSynthEngineTests.cpp
+        InputMidiNoteTrackerTests.cpp
         ProgressionPlayerTests.cpp
         ChordCardTests.cpp
         VoicingSelectorTests.cpp
