@@ -247,15 +247,12 @@ void AppLayout::onSearchChanged(const std::string& query,
                                 component::KeyScaleSelector::SearchMode mode,
                                 component::KeyScaleSelector::SearchScope scope)
 {
-    juce::ignoreUnused(mode);
-
-    _scaleSuggestionPanel.setSearchQuery(query);
-    _scaleSuggestionPanel.setSearchScope(
-        scope == component::KeyScaleSelector::SearchScope::All
-            ? theory::NextScaleGenerator::Pool::All
-            : theory::NextScaleGenerator::Pool::Predicted);
+    juce::ignoreUnused(query, mode, scope);
 
     updateSuggestionPanelVisibility();
+    // Mode / scope / query changes re-pull key, scale, and the current chord so Scale mode
+    // never keeps a stale ranking after the chord context moved under Chord mode.
+    refreshScaleSuggestions();
 }
 
 void AppLayout::updateSuggestionPanelVisibility()
@@ -366,6 +363,8 @@ void AppLayout::syncNextChordFromProgressionTail()
     auto sequence = theory::buildSequenceContextBeforeLast(
         _progressionEditor.getMidiEditorState(), keyScale);
     _nextChordPanel.setCurrentChord(last.chord, std::move(sequence));
+    // Scale suggestions share the same "current chord" context as next-chord ranking.
+    _scaleSuggestionPanel.setCurrentChord(last.chord);
 }
 
 void AppLayout::refreshNextChordSequenceContext()
@@ -547,4 +546,5 @@ void AppLayout::restoreStateFromValueTree()
 
     _progressionEditor.restoreMidiEditorState(state.progressionEditorState);
     refreshNextChordSequenceContext();
+    refreshScaleSuggestions();
 }

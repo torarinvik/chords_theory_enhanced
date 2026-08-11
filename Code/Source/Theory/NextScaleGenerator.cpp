@@ -7,6 +7,7 @@
 #include <set>
 
 #include "Theory/ChordDatabase.h"
+#include "Theory/NextChordScorer.h"
 
 namespace theory
 {
@@ -103,7 +104,7 @@ namespace
         return contains(suggestion.label)
             || contains(getScaleJsonKey(suggestion.scale))
             || contains(getKeyLabel(suggestion.key))
-            || contains(suggestion.reasonLabel);
+            || contains(suggestion.reasonChordName);
     }
 
     struct CandidateKey
@@ -170,7 +171,8 @@ std::vector<ScaleSuggestion> NextScaleGenerator::generate(
 
     if (currentChord.has_value() && !currentChord->notes.empty())
     {
-        const auto rootPc = clampInt(currentChord->notes.front().getPitchClass(), 0, 11);
+        // Harmonic root (not bass) so slash-chord inversions still open the right tonic pool.
+        const auto rootPc = clampInt(NextChordScorer::rootPitchClass(*currentChord), 0, 11);
         const auto chordRootKey = static_cast<Key>(rootPc);
         for (int s = 0; s < kNumScales; ++s)
             poolKeys.insert({ chordRootKey, static_cast<Scale>(s) });
@@ -195,27 +197,30 @@ std::vector<ScaleSuggestion> NextScaleGenerator::generate(
         else
             suggestion.fitPercent = 70;
 
-        float score = static_cast<float>(suggestion.fitPercent);
+        // Fit is the main axis so changing the current chord re-ranks the list; structural
+        // bonuses (parallel / relative / catalogue hit) are secondary nudges.
+        float score = static_cast<float>(suggestion.fitPercent) * 2.0f;
 
         if (ck.key == currentKey)
         {
-            suggestion.reasonLabel = "Parallel";
+            suggestion.reason = ScaleSuggestionReason::Parallel;
             score += 18.f;
         }
         else if (const auto relative = relativeCompanion(currentKey, currentScale);
                  relative && relative->first == ck.key && relative->second == ck.scale)
         {
-            suggestion.reasonLabel = "Relative";
+            suggestion.reason = ScaleSuggestionReason::Relative;
             score += 22.f;
         }
         else if (currentChord.has_value() && chordAppearsInScale(ck.key, ck.scale, *currentChord))
         {
-            suggestion.reasonLabel = "Contains " + currentChord->readableName;
-            score += 12.f;
+            suggestion.reason = ScaleSuggestionReason::ContainsChord;
+            suggestion.reasonChordName = currentChord->readableName;
+            score += 14.f;
         }
         else
         {
-            suggestion.reasonLabel = "Related";
+            suggestion.reason = ScaleSuggestionReason::Related;
         }
 
         score += scalePrior(ck.scale);
