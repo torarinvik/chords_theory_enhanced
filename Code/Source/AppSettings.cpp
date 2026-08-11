@@ -5,9 +5,19 @@ namespace
     const char* SHOW_STANDALONE_TITLE_KEY = "showStandaloneTitle";
     const char* THEME_MODE_KEY = "themeMode";
     const char* LANGUAGE_KEY = "language";
+    const char* NOTE_TEXT_COLOUR_KEY = "noteTextColour";
+    const char* SCALE_HIGHLIGHT_COLOUR_KEY = "scaleHighlightColour";
+    const char* CHORD_HIGHLIGHT_COLOUR_KEY = "chordHighlightColour";
 
     const char* THEME_MODE_LIGHT = "light";
     const char* THEME_MODE_DARK = "dark";
+
+    // Matches the previous hard-coded ivory-key label grey in MidiEditor.
+    constexpr juce::uint32 kDefaultNoteTextColourArgb = 0xFF6A6E76;
+    // Soft green, distinct from chord highlight blue.
+    constexpr juce::uint32 kDefaultScaleHighlightColourArgb = 0xFF3D9B6E;
+    // Matches Theme PRIMARY blue used previously for chord-tone piano fill.
+    constexpr juce::uint32 kDefaultChordHighlightColourArgb = 0xFF3A607E;
 
     juce::String getAppName()
     {
@@ -73,6 +83,62 @@ void AppSettings::setLanguage(const std::string& languageCode)
 {
     _properties.setValue(LANGUAGE_KEY, juce::String(languageCode));
     _properties.save();
+    getChangeBroadcaster().sendChangeMessage();
+}
+
+juce::Colour AppSettings::getNoteTextColour() const
+{
+    const auto stored = _properties.getValue(NOTE_TEXT_COLOUR_KEY, {});
+    if (stored.isEmpty())
+        return juce::Colour(kDefaultNoteTextColourArgb);
+
+    // Stored as 8-digit hex ARGB (no leading #), same form Colour::toDisplayString(true) uses.
+    return juce::Colour::fromString(stored.startsWithChar('#') ? stored : ("#" + stored));
+}
+
+void AppSettings::setNoteTextColour(juce::Colour colour)
+{
+    _properties.setValue(NOTE_TEXT_COLOUR_KEY, colour.toDisplayString(true));
+    _properties.save();
+    getChangeBroadcaster().sendChangeMessage();
+}
+
+juce::Colour AppSettings::getScaleHighlightColour() const
+{
+    const auto stored = _properties.getValue(SCALE_HIGHLIGHT_COLOUR_KEY, {});
+    if (stored.isEmpty())
+        return juce::Colour(kDefaultScaleHighlightColourArgb);
+
+    return juce::Colour::fromString(stored.startsWithChar('#') ? stored : ("#" + stored));
+}
+
+void AppSettings::setScaleHighlightColour(juce::Colour colour)
+{
+    _properties.setValue(SCALE_HIGHLIGHT_COLOUR_KEY, colour.toDisplayString(true));
+    _properties.save();
+    getChangeBroadcaster().sendChangeMessage();
+}
+
+juce::Colour AppSettings::getChordHighlightColour() const
+{
+    const auto stored = _properties.getValue(CHORD_HIGHLIGHT_COLOUR_KEY, {});
+    if (stored.isEmpty())
+        return juce::Colour(kDefaultChordHighlightColourArgb);
+
+    return juce::Colour::fromString(stored.startsWithChar('#') ? stored : ("#" + stored));
+}
+
+void AppSettings::setChordHighlightColour(juce::Colour colour)
+{
+    _properties.setValue(CHORD_HIGHLIGHT_COLOUR_KEY, colour.toDisplayString(true));
+    _properties.save();
+    getChangeBroadcaster().sendChangeMessage();
+}
+
+juce::ChangeBroadcaster& AppSettings::getChangeBroadcaster()
+{
+    static juce::ChangeBroadcaster broadcaster;
+    return broadcaster;
 }
 
 AppSettings& AppSettings::getInstance()

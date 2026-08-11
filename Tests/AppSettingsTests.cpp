@@ -23,6 +23,9 @@ TEST_CASE("AppSettings returns sane defaults over a nonexistent file", "[AppSett
     CHECK(settings.getThemeMode() == nui::Theme::Mode::DARK);
     CHECK(settings.getLanguage() == "en");
     CHECK(settings.getShowStandaloneTitle() == true);
+    CHECK(settings.getNoteTextColour() == juce::Colour(0xFF6A6E76));
+    CHECK(settings.getScaleHighlightColour() == juce::Colour(0xFF3D9B6E));
+    CHECK(settings.getChordHighlightColour() == juce::Colour(0xFF3A607E));
 
     file.deleteFile();
 }
@@ -44,6 +47,15 @@ TEST_CASE("AppSettings round-trips each typed accessor", "[AppSettings]")
     settings.setShowStandaloneTitle(false);
     CHECK(settings.getShowStandaloneTitle() == false);
 
+    settings.setNoteTextColour(juce::Colours::orange);
+    CHECK(settings.getNoteTextColour() == juce::Colours::orange);
+
+    settings.setScaleHighlightColour(juce::Colours::cyan);
+    CHECK(settings.getScaleHighlightColour() == juce::Colours::cyan);
+
+    settings.setChordHighlightColour(juce::Colours::magenta);
+    CHECK(settings.getChordHighlightColour() == juce::Colours::magenta);
+
     file.deleteFile();
 }
 
@@ -56,6 +68,7 @@ TEST_CASE("AppSettings persists across separate instances over the same file", "
         first.setThemeMode(nui::Theme::Mode::LIGHT);
         first.setLanguage("de");
         first.setShowStandaloneTitle(false);
+        first.setNoteTextColour(juce::Colour(0xFF112233));
     }
 
     // A second instance, exactly matching what happens when a second plugin instance/DAW
@@ -64,6 +77,7 @@ TEST_CASE("AppSettings persists across separate instances over the same file", "
     CHECK(second.getThemeMode() == nui::Theme::Mode::LIGHT);
     CHECK(second.getLanguage() == "de");
     CHECK(second.getShowStandaloneTitle() == false);
+    CHECK(second.getNoteTextColour() == juce::Colour(0xFF112233));
 
     file.deleteFile();
 }

@@ -18,6 +18,7 @@ using theory::MidiEditorState;
 using theory::NoteConvertor;
 using theory::ProgressionSlot;
 using theory::Scale;
+// theory::Key / Scale also used via theory:: namespace in attach-scale tests
 
 namespace
 {
@@ -503,6 +504,72 @@ TEST_CASE("MidiEditor::getPlayheadChordPitchClasses reflects notes under the loo
     CHECK(active[7]);
 }
 
+TEST_CASE("MidiEditor: clicking the ruler seeks the playhead to that bar", "[MidiEditor]")
+{
+    ProgressionPlayer player;
+    MidiEditor editor("test-midi-editor", &player);
+    editor.setBounds(0, 0, 800, 400);
+
+    editor.addChordAtBeat(0.0, getTestChord(), testSlot(getTestChord()));
+    editor.addChordAtBeat(kBeatsPerBar, getTestChord(), testSlot(getTestChord()));
+
+    // Click in the ruler over beat ~5 → bar 1 start (beat 4).
+    const juce::Point<float> rulerPos { beatToX(5.0), 10.f };
+    editor.mouseDown(makeMouseEvent(editor, rulerPos));
+    editor.mouseUp(makeMouseEvent(editor, rulerPos));
+
+    CHECK(editor.getPlayheadBeat() == Catch::Approx(4.0));
+    CHECK(player.getPlayheadBeat() == Catch::Approx(4.0));
+}
+
+TEST_CASE("MidiEditor::setBpm forwards to the progression player", "[MidiEditor]")
+{
+    ProgressionPlayer player;
+    MidiEditor editor("test-midi-editor", &player);
+    editor.setBpm(96.0);
+    CHECK(editor.getBpm() == Catch::Approx(96.0));
+    CHECK(player.getBpm() == Catch::Approx(96.0));
+}
+
+TEST_CASE("MidiEditor: attaching a scale to a chord block is round-tripped via getState/restoreState", "[MidiEditor]")
+{
+    MidiEditor editor("test-midi-editor");
+    editor.setBounds(0, 0, 800, 400);
+    editor.addChordAtBeat(0.0, getTestChord(), testSlot(getTestChord()));
+
+    editor.attachScaleToChordBlock(0, theory::Key::A, theory::Scale::Dorian);
+
+    const auto state = editor.getState();
+    REQUIRE(state.chordBlocks.size() == 1);
+    CHECK(state.chordBlocks[0].hasAttachedScale);
+    CHECK(state.chordBlocks[0].attachedScaleKey == theory::Key::A);
+    CHECK(state.chordBlocks[0].attachedScale == theory::Scale::Dorian);
+
+    MidiEditor restored("test-midi-editor-restored");
+    restored.setBounds(0, 0, 800, 400);
+    restored.restoreState(state);
+
+    const auto again = restored.getState();
+    REQUIRE(again.chordBlocks.size() == 1);
+    CHECK(again.chordBlocks[0].hasAttachedScale);
+    CHECK(again.chordBlocks[0].attachedScaleKey == theory::Key::A);
+    CHECK(again.chordBlocks[0].attachedScale == theory::Scale::Dorian);
+
+    // Scale tones under playhead at beat 0: A Dorian root is pitch class 9.
+    const auto scalePcs = restored.getPlayheadScalePitchClasses();
+    CHECK(scalePcs[9]); // A
+}
+
+TEST_CASE("MidiEditor: tryParseScaleDragDescription parses scale payload", "[MidiEditor]")
+{
+    theory::Key key = theory::Key::C;
+    theory::Scale scale = theory::Scale::Major;
+    CHECK(MidiEditor::tryParseScaleDragDescription("chordsTheoryScale|Db|Dorian", key, scale));
+    CHECK(key == theory::Key::Db);
+    CHECK(scale == theory::Scale::Dorian);
+    CHECK_FALSE(MidiEditor::tryParseScaleDragDescription("not-a-scale", key, scale));
+}
+
 TEST_CASE("MidiEditor::startPlayback on an empty editor is a no-op", "[MidiEditor]")
 {
     ProgressionPlayer player;
@@ -569,4 +636,60 @@ TEST_CASE("MidiEditor: double-clicking the ruler zooms/scrolls so the loop exact
     editor.mouseDoubleClick(makeMouseEvent(editor, midBarPos));
 
     CHECK(editor.getChordBlockCount() == 0);
+    CHECK(editor.getNoteCount() == 0); // delete must remove the chord's notes too
+}
+
+TEST_CASE("MidiEditor: hover × on a chord-lane chip deletes the chord and its notes", "[MidiEditor]")
+{
+    MidiEditor editor("test-midi-editor");
+    editor.setBounds(0, 0, 800, 400);
+
+    const auto& chord = getTestChord();
+    editor.addChordAtBeat(0.0, chord, testSlot(chord));
+    REQUIRE(editor.getChordBlockCount() == 1);
+    REQUIRE(editor.getNoteCount() > 0);
+
+    // Chip: y = contentBottom+2 … +kChordLaneHeight-2; content bottom =
+    // height - scrollbar - piano - chordLane. Delete disc is centred in the chip, inset from its
+    // right edge (full-bar width ≈ 4*ppb - 4).
+    const auto contentBottom = 400.f - kScrollbarThickness - kPianoKeyboardHeight - kChordLaneHeight;
+    const auto chipCentreY = contentBottom + kChordLaneHeight * 0.5f;
+    const auto chipRight = beatToX(4.0) - 4.f; // length*ppb - 4, start at beat 0
+    const auto deleteX = chipRight - 3.f - 7.f; // pad + half button size (matches MidiEditor.cpp)
+    const juce::Point<float> deletePos { deleteX, chipCentreY };
+
+    editor.mouseMove(makeMouseEvent(editor, deletePos));
+    editor.mouseDown(makeMouseEvent(editor, deletePos));
+    editor.mouseUp(makeMouseEvent(editor, deletePos));
+
+    CHECK(editor.getChordBlockCount() == 0);
+    CHECK(editor.getNoteCount() == 0);
+}
+
+TEST_CASE("MidiEditor: Delete/Backspace removes the selected chord and its notes", "[MidiEditor]")
+{
+    MidiEditor editor("test-midi-editor");
+    editor.setBounds(0, 0, 800, 400);
+
+    editor.addChordAtBeat(0.0, getTestChord(), testSlot(getTestChord()));
+    REQUIRE(editor.getChordBlockCount() == 1);
+    const auto noteCount = editor.getNoteCount();
+    REQUIRE(noteCount > 0);
+
+    const auto chordLaneY = 400.f - kScrollbarThickness - kPianoKeyboardHeight - kChordLaneHeight + 4.f;
+    const juce::Point<float> clickPos { beatToX(0.0) + 20.f, chordLaneY };
+    editor.mouseDown(makeMouseEvent(editor, clickPos));
+    editor.mouseUp(makeMouseEvent(editor, clickPos)); // select + preview
+
+    REQUIRE(editor.keyPressed(juce::KeyPress(juce::KeyPress::deleteKey)));
+    CHECK(editor.getChordBlockCount() == 0);
+    CHECK(editor.getNoteCount() == 0);
+
+    // Nothing selected → Delete is a no-op (not consumed as "handled" only if no selection - we
+    // return false when nothing to delete? Currently returns false only when not delete key.
+    // After delete, further Delete should not crash.
+    editor.addChordAtBeat(0.0, getTestChord(), testSlot(getTestChord()));
+    // No selection after add - Delete should not remove it.
+    CHECK_FALSE(editor.keyPressed(juce::KeyPress(juce::KeyPress::deleteKey)));
+    CHECK(editor.getChordBlockCount() == 1);
 }

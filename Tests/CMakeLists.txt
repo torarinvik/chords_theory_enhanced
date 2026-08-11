@@ -24,6 +24,7 @@ add_executable(${PROJECT_NAME}_Tests
         MidiEditorTests.cpp
         SectionPanelChangeTests.cpp
         NextChordGeneratorTests.cpp
+        NextScaleGeneratorTests.cpp
         ChordSeqAIModelTests.cpp
         main.cpp
 )

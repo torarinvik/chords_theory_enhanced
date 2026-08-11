@@ -115,6 +115,9 @@ private:
     nelement::SVGButton _playButton { "progression-play-button", nui::Icons::getPlay() };
     nelement::SVGButton _clearButton { "progression-clear-button", nui::Icons::getCross() };
 
+    nelement::Text _bpmLabel { "progression-bpm-label", "", "BPM" };
+    juce::Slider _bpmSlider;
+
     ProgressionDragHandle _dragHandle;
     MidiEditor _midiEditor;
 

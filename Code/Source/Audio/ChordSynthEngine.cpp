@@ -34,15 +34,17 @@ void ChordSynthEngine::prepare(double sampleRate, int samplesPerBlock, int numCh
 
 void ChordSynthEngine::renderNextBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages, int startSample, int numSamples, juce::AudioPlayHead* playHead)
 {
-    auto bpm = kFallbackBpm;
+    auto hostBpm = kFallbackBpm;
     if (playHead != nullptr)
         if (const auto position = playHead->getPosition())
-            if (const auto hostBpm = position->getBpm())
-                bpm = *hostBpm;
+            if (const auto reported = position->getBpm())
+                hostBpm = *reported;
 
-    _sharedState.hostBpm = bpm;
-
-    _progressionPlayer.renderNextBlock(midiMessages, numSamples, _sampleRate, bpm);
+    // LFO sync follows the host when present; progression loop uses the user's sequencer BPM
+    // (ProgressionPlayer::setBpm) so standalone tempo is controllable and host tempo doesn't
+    // surprise-change a programmed loop rate mid-edit.
+    _sharedState.hostBpm = hostBpm;
+    _progressionPlayer.renderNextBlock(midiMessages, numSamples, _sampleRate, _progressionPlayer.getBpm());
 
     // Advanced unconditionally, whether or not anything is currently sounding - this is what
     // makes the LFO's Free mode a genuinely continuous, globally-shared clock rather than

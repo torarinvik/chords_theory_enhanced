@@ -5,7 +5,11 @@
 #include <cmath>
 #include <limits>
 
+#include "AppSettings.h"
+#include "Theory/ChordDatabase.h"
+#include "Theory/Key.h"
 #include "Theory/NoteConvertor.h"
+#include "Theory/Scale.h"
 
 namespace component
 {
@@ -21,6 +25,8 @@ namespace
     constexpr float kGutterWidth = 40.f;
     constexpr float kRulerHeight = 24.f;
     constexpr float kChordLaneHeight = 28.f;
+    constexpr float kChordDeleteButtonSize = 14.f;
+    constexpr float kChordDeleteButtonPad = 3.f;
     // Real horizontal piano under the chord lane - height chosen for readable black-key depth and
     // bottom letter labels at pro-plugin proportions.
     constexpr float kPianoKeyboardHeight = 80.f;
@@ -51,7 +57,20 @@ namespace
     constexpr float kClickMaxDistance = 6.f;
 
     constexpr std::array<bool, 12> kIsBlackKey { false,true,false,true,false,false,true,false,true,false,true,false };
+    // C-major spellings (sharps on black keys) - same vocabulary as a C-major keyboard diagram.
     const std::array<juce::String, 12> kNoteNames { "C","C#","D","D#","E","F","F#","G","G#","A","A#","B" };
+
+    // Settings note-text colour, auto-brightened on ebony keys when the pick is too dark to read.
+    juce::Colour noteTextColourForKey(bool onBlackKey, bool isActive)
+    {
+        if (isActive)
+            return juce::Colours::white.withAlpha(0.95f);
+
+        auto colour = AppSettings::getInstance().getNoteTextColour();
+        if (onBlackKey && colour.getBrightness() < 0.55f)
+            colour = colour.withBrightness(0.78f);
+        return colour;
+    }
 }
 
 MidiEditor::MidiEditor(const std::string& identifier, audio::ProgressionPlayer* progressionPlayer):
@@ -77,6 +96,8 @@ MidiEditor::MidiEditor(const std::string& identifier, audio::ProgressionPlayer* 
     _vScrollBar.setColour(juce::ScrollBar::thumbColourId, nui::Theme::newColor(nui::Theme::ThemeColor::BACKGROUND).asJuce().withAlpha(0.5f));
 
     addMouseListener(this, true);
+    setWantsKeyboardFocus(true);
+    AppSettings::getChangeBroadcaster().addChangeListener(this);
 }
 
 MidiEditor::~MidiEditor()
@@ -87,8 +108,17 @@ MidiEditor::~MidiEditor()
     if (_progressionPlayer != nullptr)
         _progressionPlayer->stop();
 
+    AppSettings::getChangeBroadcaster().removeChangeListener(this);
     _hScrollBar.removeListener(this);
     _vScrollBar.removeListener(this);
+}
+
+void MidiEditor::changeListenerCallback(juce::ChangeBroadcaster* source)
+{
+    Component::changeListenerCallback(source);
+
+    if (source == &AppSettings::getChangeBroadcaster())
+        repaint();
 }
 
 void MidiEditor::paint(juce::Graphics& g)
@@ -219,11 +249,47 @@ void MidiEditor::clear()
     _notes.clear();
     _chordBlocks.clear();
     _nextChordBlockId = 0;
+    _selectedChordIndex = -1;
+    _hoveredChordIndex = -1;
+    _hoveredChordDeleteButton = false;
     _loopStartBeat = 0.0;
     _loopEndBeat = kBeatsPerBar;
     _loopManuallyAdjusted = false;
     refreshScrollRanges();
     repaint();
+}
+
+void MidiEditor::removeChordBlockAt(int index)
+{
+    if (index < 0 || index >= static_cast<int>(_chordBlocks.size()))
+        return;
+
+    const auto removedId = _chordBlocks[static_cast<std::size_t>(index)].id;
+    _chordBlocks.erase(_chordBlocks.begin() + index);
+    _notes.erase(std::remove_if(_notes.begin(), _notes.end(),
+        [removedId](const MidiNoteBlock& note) { return note.sourceChordId == removedId; }), _notes.end());
+
+    if (_selectedChordIndex == index)
+        _selectedChordIndex = -1;
+    else if (_selectedChordIndex > index)
+        --_selectedChordIndex;
+
+    if (_hoveredChordIndex == index)
+    {
+        _hoveredChordIndex = -1;
+        _hoveredChordDeleteButton = false;
+    }
+    else if (_hoveredChordIndex > index)
+        --_hoveredChordIndex;
+
+    if (_draggedChordIndex == index)
+        _draggedChordIndex = -1;
+    else if (_draggedChordIndex > index)
+        --_draggedChordIndex;
+
+    refreshScrollRanges();
+    repaint();
+    notifyContentChanged();
 }
 
 std::optional<int> MidiEditor::getNoteMidiPitch(int index) const
@@ -289,6 +355,9 @@ theory::MidiEditorState MidiEditor::getState() const
         out.frozenSymbol = block.frozenChord.symbol;
         out.frozenType = block.frozenChord.type;
         out.frozenNotes = block.frozenChord.notes;
+        out.hasAttachedScale = block.hasAttachedScale;
+        out.attachedScaleKey = block.attachedScaleKey;
+        out.attachedScale = block.attachedScale;
         state.chordBlocks.push_back(std::move(out));
     }
 
@@ -299,6 +368,9 @@ void MidiEditor::restoreState(const theory::MidiEditorState& state)
 {
     stopPlayback();
     _loopManuallyAdjusted = false;
+    _selectedChordIndex = -1;
+    _hoveredChordIndex = -1;
+    _hoveredChordDeleteButton = false;
 
     _notes.clear();
     _notes.reserve(state.notes.size());
@@ -320,6 +392,9 @@ void MidiEditor::restoreState(const theory::MidiEditorState& state)
         data.frozenChord.type = block.frozenType;
         data.frozenChord.popularityOrder = block.sourceSlot.popularityOrder;
         data.frozenChord.notes = block.frozenNotes;
+        data.hasAttachedScale = block.hasAttachedScale;
+        data.attachedScaleKey = block.attachedScaleKey;
+        data.attachedScale = block.attachedScale;
         _chordBlocks.push_back(std::move(data));
     }
 
@@ -376,9 +451,51 @@ bool MidiEditor::isPlaying() const
 
 double MidiEditor::getUiPlayheadBeat() const
 {
-    if (_progressionPlayer != nullptr && _progressionPlayer->isPlaying())
+    if (_progressionPlayer != nullptr)
         return _progressionPlayer->getPlayheadBeat();
     return _loopStartBeat;
+}
+
+double MidiEditor::getPlayheadBeat() const
+{
+    return getUiPlayheadBeat();
+}
+
+double MidiEditor::snapBeatToBar(double beat) noexcept
+{
+    return std::floor(juce::jmax(0.0, beat) / kBeatsPerBar) * kBeatsPerBar;
+}
+
+void MidiEditor::seekPlayheadToBeat(double beat)
+{
+    if (_progressionPlayer == nullptr)
+        return;
+
+    _progressionPlayer->seek(snapBeatToBar(beat));
+    repaint();
+}
+
+void MidiEditor::setBpm(double bpm)
+{
+    if (_progressionPlayer != nullptr)
+        _progressionPlayer->setBpm(bpm);
+}
+
+double MidiEditor::getBpm() const
+{
+    return _progressionPlayer != nullptr ? _progressionPlayer->getBpm() : 120.0;
+}
+
+void MidiEditor::seekPlayheadFromPosition(juce::Point<float> position)
+{
+    if (_progressionPlayer == nullptr)
+        return;
+
+    // Ruler (and seek drags) map x → beat; ignore the gutter so a click there doesn't jump to 0.
+    if (position.x < kGutterWidth)
+        return;
+
+    seekPlayheadToBeat(xToBeat(position.x));
 }
 
 std::array<bool, 12> MidiEditor::getPlayheadChordPitchClasses() const
@@ -406,18 +523,97 @@ std::array<bool, 12> MidiEditor::getPlayheadChordPitchClasses() const
         return pitchClasses;
 
     // Fall back to the chord block covering this beat (label still present, notes maybe deleted).
-    for (const auto& block : _chordBlocks)
+    const auto blockIndex = findChordBlockIndexAtBeat(beat);
+    if (blockIndex >= 0)
     {
-        const auto length = effectiveChordBlockLength(block);
-        if (beat < block.startBeat || beat >= block.startBeat + length)
-            continue;
-
-        for (const auto& tone : block.frozenChord.notes)
+        for (const auto& tone : _chordBlocks[static_cast<std::size_t>(blockIndex)].frozenChord.notes)
             pitchClasses[static_cast<std::size_t>(juce::jlimit(0, 11, tone.getPitchClass()))] = true;
-        break;
     }
 
     return pitchClasses;
+}
+
+std::array<bool, 12> MidiEditor::getPlayheadScalePitchClasses() const
+{
+    std::array<bool, 12> pitchClasses {};
+    pitchClasses.fill(false);
+
+    const auto blockIndex = findChordBlockIndexAtBeat(getUiPlayheadBeat());
+    if (blockIndex < 0)
+        return pitchClasses;
+
+    const auto& block = _chordBlocks[static_cast<std::size_t>(blockIndex)];
+    if (!block.hasAttachedScale)
+        return pitchClasses;
+
+    const auto& data = theory::ChordDatabase::getInstance().get(block.attachedScaleKey, block.attachedScale);
+    for (const auto& note : data.scaleNotes)
+        pitchClasses[static_cast<std::size_t>(juce::jlimit(0, 11, note.getPitchClass()))] = true;
+
+    return pitchClasses;
+}
+
+int MidiEditor::findChordBlockIndexAtBeat(double beat) const
+{
+    for (int i = 0; i < static_cast<int>(_chordBlocks.size()); ++i)
+    {
+        const auto& block = _chordBlocks[static_cast<std::size_t>(i)];
+        const auto length = effectiveChordBlockLength(block);
+        if (beat >= block.startBeat && beat < block.startBeat + length)
+            return i;
+    }
+    return -1;
+}
+
+void MidiEditor::attachScaleToChordBlock(int chordBlockIndex, theory::Key key, theory::Scale scale)
+{
+    if (chordBlockIndex < 0 || chordBlockIndex >= static_cast<int>(_chordBlocks.size()))
+        return;
+
+    auto& block = _chordBlocks[static_cast<std::size_t>(chordBlockIndex)];
+    block.hasAttachedScale = true;
+    block.attachedScaleKey = key;
+    block.attachedScale = scale;
+    repaint();
+    notifyContentChanged();
+}
+
+void MidiEditor::clearScaleFromChordBlock(int chordBlockIndex)
+{
+    if (chordBlockIndex < 0 || chordBlockIndex >= static_cast<int>(_chordBlocks.size()))
+        return;
+
+    auto& block = _chordBlocks[static_cast<std::size_t>(chordBlockIndex)];
+    if (!block.hasAttachedScale)
+        return;
+
+    block.hasAttachedScale = false;
+    repaint();
+    notifyContentChanged();
+}
+
+bool MidiEditor::tryParseScaleDragDescription(const juce::var& description, theory::Key& outKey, theory::Scale& outScale)
+{
+    const auto text = description.toString();
+    if (!text.startsWith(kScaleDragPrefix))
+        return false;
+
+    const auto payload = text.fromFirstOccurrenceOf(kScaleDragPrefix, false, false);
+    const auto keyText = payload.upToFirstOccurrenceOf("|", false, false);
+    const auto scaleText = payload.fromFirstOccurrenceOf("|", false, false);
+    if (keyText.isEmpty() || scaleText.isEmpty())
+        return false;
+
+    try
+    {
+        outKey = theory::parseKey(keyText.toStdString());
+        outScale = theory::parseScale(scaleText.toStdString());
+        return true;
+    }
+    catch (const std::invalid_argument&)
+    {
+        return false;
+    }
 }
 
 void MidiEditor::addListener(Listener* listener)
@@ -492,6 +688,54 @@ void MidiEditor::filesDropped(const juce::StringArray& files, int x, int y)
         listener->onChordFileDropped(dropBeat, files[0]);
 }
 
+bool MidiEditor::isInterestedInDragSource(const SourceDetails& dragSourceDetails)
+{
+    theory::Key key;
+    theory::Scale scale;
+    return tryParseScaleDragDescription(dragSourceDetails.description, key, scale);
+}
+
+void MidiEditor::itemDragEnter(const SourceDetails& dragSourceDetails)
+{
+    itemDragMove(dragSourceDetails);
+}
+
+void MidiEditor::itemDragMove(const SourceDetails& dragSourceDetails)
+{
+    const auto pos = dragSourceDetails.localPosition.toFloat();
+    const auto chordIndex = hitTestChordBlock(pos);
+    if (chordIndex != _hoveredChordIndex)
+    {
+        _hoveredChordIndex = chordIndex;
+        repaint();
+    }
+}
+
+void MidiEditor::itemDragExit(const SourceDetails&)
+{
+    _hoveredChordIndex = -1;
+    repaint();
+}
+
+void MidiEditor::itemDropped(const SourceDetails& dragSourceDetails)
+{
+    theory::Key key;
+    theory::Scale scale;
+    if (!tryParseScaleDragDescription(dragSourceDetails.description, key, scale))
+        return;
+
+    const auto pos = dragSourceDetails.localPosition.toFloat();
+    auto chordIndex = hitTestChordBlock(pos);
+    if (chordIndex < 0)
+        chordIndex = findChordBlockIndexAtBeat(xToBeat(pos.x));
+
+    if (chordIndex >= 0)
+        attachScaleToChordBlock(chordIndex, key, scale);
+
+    _hoveredChordIndex = -1;
+    repaint();
+}
+
 void MidiEditor::scrollBarMoved(juce::ScrollBar* scrollBarThatHasMoved, double newRangeStart)
 {
     if (scrollBarThatHasMoved == &_hScrollBar)
@@ -545,6 +789,24 @@ void MidiEditor::mouseDown(const juce::MouseEvent& event)
         return;
     }
 
+    // Click/scrub on the bar ruler (outside loop handles) moves the playhead to that bar.
+    if (event.position.y >= 0.f && event.position.y <= kRulerHeight && event.position.x >= kGutterWidth)
+    {
+        _dragMode = DragMode::SeekPlayhead;
+        seekPlayheadFromPosition(event.position);
+        startTimerHz(45);
+        return;
+    }
+
+    // Hover × on a chord-lane chip - one-click delete (block + its notes).
+    const auto deleteChordIndex = hitTestChordDeleteButton(event.position);
+    if (deleteChordIndex >= 0)
+    {
+        removeChordBlockAt(deleteChordIndex);
+        _dragMode = DragMode::None;
+        return;
+    }
+
     const auto noteIndex = hitTestNote(event.position);
     if (noteIndex >= 0)
     {
@@ -568,13 +830,19 @@ void MidiEditor::mouseDown(const juce::MouseEvent& event)
     {
         const auto& block = _chordBlocks[static_cast<std::size_t>(chordIndex)];
         _draggedChordIndex = chordIndex;
+        _selectedChordIndex = chordIndex;
         _dragMode = DragMode::MoveChordBlock;
         _dragStartBeat = block.startBeat;
+        if (getPeer() != nullptr)
+            grabKeyboardFocus();
         startTimerHz(45);
+        repaint();
         return;
     }
 
+    _selectedChordIndex = -1;
     _dragMode = DragMode::None;
+    repaint();
 }
 
 void MidiEditor::mouseDrag(const juce::MouseEvent& event)
@@ -603,6 +871,9 @@ void MidiEditor::mouseUp(const juce::MouseEvent& event)
     refreshScrollRanges();
     repaint();
 
+    if (finishedDragMode == DragMode::SeekPlayhead)
+        return; // pure transport gesture - no content mutation
+
     if (finishedDragMode == DragMode::ResizeLoopStart || finishedDragMode == DragMode::ResizeLoopEnd)
     {
         _loopManuallyAdjusted = true;
@@ -611,7 +882,7 @@ void MidiEditor::mouseUp(const juce::MouseEvent& event)
         return;
     }
 
-    // Chord-lane label: click (no real drag) previews the block's live notes; a real drag moves it.
+    // Chord-lane label: click (no real drag) selects + previews; a real drag moves it.
     if (finishedDragMode == DragMode::MoveChordBlock
         && finishedChordIndex >= 0
         && finishedChordIndex < static_cast<int>(_chordBlocks.size()))
@@ -620,6 +891,9 @@ void MidiEditor::mouseUp(const juce::MouseEvent& event)
         {
             // Undo any micro-nudge so a pure click never mutates the progression.
             _chordBlocks[static_cast<std::size_t>(finishedChordIndex)].startBeat = originalChordStartBeat;
+            _selectedChordIndex = finishedChordIndex;
+            if (getPeer() != nullptr)
+                grabKeyboardFocus();
 
             const auto blockId = _chordBlocks[static_cast<std::size_t>(finishedChordIndex)].id;
             std::vector<int> midiNotes;
@@ -633,6 +907,7 @@ void MidiEditor::mouseUp(const juce::MouseEvent& event)
 
             for (auto* listener : _listeners)
                 listener->onChordBlockPreviewRequested(midiNotes);
+            repaint();
             return;
         }
 
@@ -666,10 +941,9 @@ void MidiEditor::mouseDoubleClick(const juce::MouseEvent& event)
     const auto chordIndex = hitTestChordBlock(event.position);
     if (chordIndex >= 0)
     {
-        _chordBlocks.erase(_chordBlocks.begin() + chordIndex);
-        refreshScrollRanges();
-        repaint();
-        notifyContentChanged();
+        // Double-click a chord chip removes the whole chord (lane + notes) - same as the hover ×
+        // and Delete/Backspace on a selection.
+        removeChordBlockAt(chordIndex);
         return;
     }
 
@@ -680,6 +954,20 @@ void MidiEditor::mouseDoubleClick(const juce::MouseEvent& event)
     refreshScrollRanges();
     repaint();
     notifyContentChanged();
+}
+
+bool MidiEditor::keyPressed(const juce::KeyPress& key)
+{
+    if (key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey)
+    {
+        if (_selectedChordIndex < 0)
+            return false;
+
+        removeChordBlockAt(_selectedChordIndex);
+        return true;
+    }
+
+    return Component::keyPressed(key);
 }
 
 void MidiEditor::mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel)
@@ -787,23 +1075,65 @@ void MidiEditor::paintChordLane(juce::Graphics& g) const
     g.drawRect(juce::Rectangle<float>(0.f, laneTop, laneWidth, kChordLaneHeight), 1.f);
 
     const auto accent = nui::Theme::newColor(nui::Theme::ThemeColor::ACCENT).asJuce();
+    const auto textColour = nui::Theme::newColor(nui::Theme::ThemeColor::TEXT).asJuce();
     g.setFont(nui::Theme::newFont(nui::Theme::REGULAR, nui::Theme::SMALL));
 
-    for (const auto& block : _chordBlocks)
+    for (int i = 0; i < static_cast<int>(_chordBlocks.size()); ++i)
     {
-        const auto length = effectiveChordBlockLength(block);
-        const auto bounds = juce::Rectangle<float>(beatToX(block.startBeat), laneTop + 2.f,
-            static_cast<float>(length * static_cast<double>(_pixelsPerBeat)) - 4.f, kChordLaneHeight - 4.f);
+        const auto& block = _chordBlocks[static_cast<std::size_t>(i)];
+        const auto bounds = getChordBlockBounds(block);
         if (bounds.getRight() < _contentArea.getX() || bounds.getX() > _contentArea.getRight())
             continue;
 
-        g.setColour(accent.withAlpha(0.2f));
+        const auto isSelected = i == _selectedChordIndex;
+        const auto isHovered = i == _hoveredChordIndex;
+
+        g.setColour(accent.withAlpha(isSelected ? 0.38f : (isHovered ? 0.28f : 0.2f)));
         g.fillRoundedRectangle(bounds, 4.f);
         g.setColour(accent);
-        g.drawRoundedRectangle(bounds, 4.f, 1.f);
+        g.drawRoundedRectangle(bounds, 4.f, isSelected ? 2.f : 1.f);
 
-        g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::TEXT).asJuce());
-        g.drawText(block.label, bounds, juce::Justification::centred, true);
+        // Leave room on the right for the hover × so the label never sits under it.
+        const auto showDelete = isHovered || isSelected;
+        auto labelBounds = bounds;
+        if (showDelete)
+            labelBounds.removeFromRight(kChordDeleteButtonSize + kChordDeleteButtonPad * 2.f);
+
+        if (block.hasAttachedScale)
+        {
+            // Chord name on the left, attached scale on the right (before the ×).
+            auto nameArea = labelBounds.reduced(4.f, 0.f);
+            auto scaleArea = nameArea.removeFromRight(juce::jmin(nameArea.getWidth() * 0.55f, 110.f));
+            g.setColour(textColour);
+            g.drawText(block.label, nameArea, juce::Justification::centredLeft, true);
+
+            const auto scaleText = theory::getKeyLabel(block.attachedScaleKey) + " "
+                + juce::translate(theory::getScaleTranslationKey(block.attachedScale)).toStdString();
+            g.setColour(AppSettings::getInstance().getScaleHighlightColour());
+            g.drawText(scaleText, scaleArea, juce::Justification::centredRight, true);
+        }
+        else
+        {
+            g.setColour(textColour);
+            g.drawText(block.label, labelBounds.reduced(4.f, 0.f), juce::Justification::centred, true);
+        }
+
+        if (showDelete)
+        {
+            const auto deleteBounds = getChordDeleteButtonBounds(block);
+            const auto deleteHot = isHovered && _hoveredChordDeleteButton;
+
+            g.setColour(deleteHot ? accent.brighter(0.15f) : accent.withAlpha(0.55f));
+            g.fillEllipse(deleteBounds);
+
+            // Simple × in white - small but readable on the accent disc.
+            g.setColour(juce::Colours::white.withAlpha(0.95f));
+            const auto cx = deleteBounds.getCentreX();
+            const auto cy = deleteBounds.getCentreY();
+            constexpr float arm = 3.2f;
+            g.drawLine(cx - arm, cy - arm, cx + arm, cy + arm, 1.4f);
+            g.drawLine(cx + arm, cy - arm, cx - arm, cy + arm, 1.4f);
+        }
     }
 }
 
@@ -912,19 +1242,22 @@ void MidiEditor::paintGutter(juce::Graphics& g) const
     g.drawVerticalLine(0, _contentArea.getY(), _contentArea.getBottom());
     g.drawVerticalLine(static_cast<int>(kGutterWidth), _contentArea.getY(), _contentArea.getBottom());
 
-    g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::BACKGROUND).asJuce()); // dark text over the light #D9D9D9 white-key cells
     g.setFont(nui::Theme::newFont(nui::Theme::REGULAR, nui::Theme::SMALL));
 
     for (int midiNote = kMinMidiNote; midiNote <= kMaxMidiNote; ++midiNote)
     {
-        if (kIsBlackKey[static_cast<std::size_t>(midiNote % 12)])
-            continue;
-
+        const auto pc = midiNote % 12;
+        const auto isBlack = kIsBlackKey[static_cast<std::size_t>(pc)];
         const auto y = pitchToY(midiNote);
         if (y + _rowHeight < _contentArea.getY() || y > _contentArea.getBottom())
             continue;
 
-        const auto label = kNoteNames[static_cast<std::size_t>(midiNote % 12)] + juce::String(midiNote / 12 - 1);
+        // White keys: C4-style. Black keys: C-major sharp names (C#, D#, …) so both match the
+        // bottom piano's vocabulary.
+        const auto label = isBlack
+            ? kNoteNames[static_cast<std::size_t>(pc)]
+            : kNoteNames[static_cast<std::size_t>(pc)] + juce::String(midiNote / 12 - 1);
+        g.setColour(noteTextColourForKey(isBlack, false));
         g.drawText(label, juce::Rectangle<float>(2.f, y, kGutterWidth - 4.f, _rowHeight), juce::Justification::centred, true);
     }
 }
@@ -1037,8 +1370,88 @@ void MidiEditor::paintPianoKeyboard(juce::Graphics& g) const
     const auto whiteKeyWidth = pianoWidth / static_cast<float>(whiteKeyCount);
     const auto blackKeyWidth = whiteKeyWidth * 0.55f;
     const auto blackKeyHeight = kPianoKeyboardHeight * 0.60f;
-    const auto activePitchClasses = getPlayheadChordPitchClasses();
-    const auto accent = nui::Theme::newColor(nui::Theme::ThemeColor::PRIMARY).asJuce();
+    const auto chordPitchClasses = getPlayheadChordPitchClasses();
+    const auto scalePitchClasses = getPlayheadScalePitchClasses();
+    const auto chordColour = AppSettings::getInstance().getChordHighlightColour();
+    const auto scaleColour = AppSettings::getInstance().getScaleHighlightColour();
+
+    // Single membership → full-key wash. Two or more → keep neutral key + role dots (scale then chord).
+    const auto paintKeyBodyFill = [&](juce::Path& keyPath, juce::Rectangle<float> bounds,
+                                      bool isChord, bool isScale, bool isBlackKey)
+    {
+        const auto roleCount = (isChord ? 1 : 0) + (isScale ? 1 : 0);
+        if (roleCount == 1)
+        {
+            const auto colour = isChord ? chordColour : scaleColour;
+            juce::ColourGradient fill(colour.brighter(isBlackKey ? 0.35f : 0.28f), 0.f, bounds.getY(),
+                colour.darker(isBlackKey ? 0.1f : 0.18f), 0.f, bounds.getBottom(), false);
+            g.setGradientFill(fill);
+            g.fillPath(keyPath);
+            g.setColour(colour.withAlpha(isChord ? 0.4f : 0.3f));
+            g.strokePath(keyPath, juce::PathStrokeType(isChord ? 2.2f : 1.6f));
+            return;
+        }
+
+        // Neutral body (idle ivory / ebony) when multi-role or idle.
+        if (isBlackKey)
+        {
+            juce::ColourGradient body(juce::Colour(0xFF3A3D44), 0.f, bounds.getY(),
+                juce::Colour(0xFF0A0B0D), 0.f, bounds.getBottom(), false);
+            body.addColour(0.18, juce::Colour(0xFF2A2C32));
+            body.addColour(0.55, juce::Colour(0xFF141518));
+            g.setGradientFill(body);
+            g.fillPath(keyPath);
+            g.setColour(juce::Colours::white.withAlpha(0.14f));
+            g.fillRoundedRectangle(bounds.reduced(1.5f, 0.f).withHeight(3.5f)
+                .withY(bounds.getY() + 1.f), 1.f);
+            g.setColour(juce::Colours::white.withAlpha(0.08f));
+            g.fillRect(juce::Rectangle<float>(bounds.getX() + 0.5f, bounds.getY() + 4.f, 1.f, bounds.getHeight() - 8.f));
+            g.setColour(juce::Colours::black.withAlpha(0.5f));
+            g.fillRect(juce::Rectangle<float>(bounds.getRight() - 1.5f, bounds.getY() + 4.f, 1.f, bounds.getHeight() - 8.f));
+        }
+        else
+        {
+            juce::ColourGradient body(juce::Colour(0xFFFAFAFC), 0.f, bounds.getY(),
+                juce::Colour(0xFFE4E6EA), 0.f, bounds.getBottom(), false);
+            body.addColour(0.72, juce::Colour(0xFFEFF0F3));
+            g.setGradientFill(body);
+            g.fillPath(keyPath);
+            g.setColour(juce::Colours::white.withAlpha(0.55f));
+            g.fillRect(juce::Rectangle<float>(bounds.getX(), bounds.getY() + 1.f, 1.f, bounds.getHeight() - 3.f));
+            g.setColour(juce::Colours::black.withAlpha(0.08f));
+            g.fillRect(juce::Rectangle<float>(bounds.getRight() - 1.f, bounds.getY() + 1.f, 1.f, bounds.getHeight() - 3.f));
+            g.setColour(juce::Colours::black.withAlpha(0.06f));
+            g.fillRect(juce::Rectangle<float>(bounds.getX() + 1.f, bounds.getBottom() - 4.f,
+                bounds.getWidth() - 2.f, 3.f));
+        }
+    };
+
+    const auto paintRoleMarkers = [&](juce::Rectangle<float> bounds, bool isChord, bool isScale, bool isBlackKey)
+    {
+        // Only when 2+ roles apply (single-role uses full-key colour instead).
+        if (!(isChord && isScale))
+            return;
+
+        const auto diameter = isBlackKey ? 5.5f : 6.5f;
+        const auto gap = 3.f;
+        const auto totalW = diameter * 2.f + gap;
+        const auto cy = bounds.getBottom() - (isBlackKey ? 9.f : 14.f);
+        auto x = bounds.getCentreX() - totalW * 0.5f;
+
+        const auto drawDot = [&](juce::Colour colour)
+        {
+            const auto dot = juce::Rectangle<float>(x, cy - diameter * 0.5f, diameter, diameter);
+            g.setColour(colour);
+            g.fillEllipse(dot);
+            g.setColour(juce::Colours::white.withAlpha(isBlackKey ? 0.55f : 0.35f));
+            g.drawEllipse(dot, 0.9f);
+            x += diameter + gap;
+        };
+
+        // Fixed order: scale (left) then chord (right).
+        drawDot(scaleColour);
+        drawDot(chordColour);
+    };
 
     // --- White keys ----------------------------------------------------------
     auto whiteIndex = 0;
@@ -1051,64 +1464,35 @@ void MidiEditor::paintPianoKeyboard(juce::Graphics& g) const
         const auto x = static_cast<float>(whiteIndex) * whiteKeyWidth;
         const auto bounds = juce::Rectangle<float>(x + kWhiteKeyGap * 0.5f, pianoTop,
             juce::jmax(1.f, whiteKeyWidth - kWhiteKeyGap), kPianoKeyboardHeight - 1.f);
-        const auto isActive = activePitchClasses[static_cast<std::size_t>(pc)];
+        const auto isChord = chordPitchClasses[static_cast<std::size_t>(pc)];
+        const auto isScale = scalePitchClasses[static_cast<std::size_t>(pc)];
+        const auto roleCount = (isChord ? 1 : 0) + (isScale ? 1 : 0);
+        const auto singleFill = roleCount == 1;
 
         juce::Path keyPath;
         keyPath.addRoundedRectangle(bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight(),
             kWhiteKeyBottomRadius, kWhiteKeyBottomRadius, false, false, true, true);
 
-        if (isActive)
-        {
-            // Luminous vertical wash - brighter near the top lip like a lit key.
-            juce::ColourGradient fill(accent.brighter(0.28f), 0.f, bounds.getY(),
-                accent.darker(0.18f), 0.f, bounds.getBottom(), false);
-            g.setGradientFill(fill);
-            g.fillPath(keyPath);
+        paintKeyBodyFill(keyPath, bounds, isChord, isScale, false);
 
-            // Soft outer glow so active keys "lift" off the bed.
-            g.setColour(accent.withAlpha(0.35f));
-            g.strokePath(keyPath, juce::PathStrokeType(2.5f));
-        }
-        else
-        {
-            // Ivory body: cool top highlight → slightly warmer body → soft foot shadow.
-            juce::ColourGradient body(juce::Colour(0xFFFAFAFC), 0.f, bounds.getY(),
-                juce::Colour(0xFFE4E6EA), 0.f, bounds.getBottom(), false);
-            body.addColour(0.72, juce::Colour(0xFFEFF0F3));
-            g.setGradientFill(body);
-            g.fillPath(keyPath);
-
-            // Left specular edge + right contact shadow (cheap 3D bevel).
-            g.setColour(juce::Colours::white.withAlpha(0.55f));
-            g.fillRect(juce::Rectangle<float>(bounds.getX(), bounds.getY() + 1.f, 1.f, bounds.getHeight() - 3.f));
-            g.setColour(juce::Colours::black.withAlpha(0.08f));
-            g.fillRect(juce::Rectangle<float>(bounds.getRight() - 1.f, bounds.getY() + 1.f, 1.f, bounds.getHeight() - 3.f));
-
-            // Front lip - darker strip at the bottom of the key face.
-            g.setColour(juce::Colours::black.withAlpha(0.06f));
-            g.fillRect(juce::Rectangle<float>(bounds.getX() + 1.f, bounds.getBottom() - 4.f,
-                bounds.getWidth() - 2.f, 3.f));
-        }
-
-        // Key outline
-        g.setColour(isActive ? accent.darker(0.25f).withAlpha(0.9f) : juce::Colour(0xFF9A9DA3).withAlpha(0.85f));
+        g.setColour(singleFill
+            ? (isChord ? chordColour : scaleColour).darker(0.25f).withAlpha(0.9f)
+            : juce::Colour(0xFF9A9DA3).withAlpha(0.85f));
         g.strokePath(keyPath, juce::PathStrokeType(0.8f));
 
-        // Letter at the bottom of the key face (C D E F G A B).
+        paintRoleMarkers(bounds, isChord, isScale, false);
+
         const auto label = kNoteNames[static_cast<std::size_t>(pc)];
         const auto labelBounds = bounds.withTrimmedTop(kPianoKeyboardHeight * 0.58f).reduced(1.f, 3.f);
         g.setFont(nui::Theme::newFont(nui::Theme::REGULAR, nui::Theme::SMALL));
-        if (isActive)
+        // Multi-role keeps ivory body → normal text colour; single fill needs contrast text.
+        const auto labelColour = noteTextColourForKey(false, singleFill);
+        if (singleFill)
         {
-            // Soft shadow under the glyph so it stays legible on bright blue.
             g.setColour(juce::Colours::black.withAlpha(0.25f));
             g.drawText(label, labelBounds.translated(0.f, 0.5f), juce::Justification::centredBottom, false);
-            g.setColour(juce::Colours::white.withAlpha(0.95f));
         }
-        else
-        {
-            g.setColour(juce::Colour(0xFF6A6E76));
-        }
+        g.setColour(labelColour);
         g.drawText(label, labelBounds, juce::Justification::centredBottom, false);
 
         ++whiteIndex;
@@ -1121,13 +1505,14 @@ void MidiEditor::paintPianoKeyboard(juce::Graphics& g) const
         const auto pc = midi % 12;
         if (kIsBlackKey[static_cast<std::size_t>(pc)])
         {
-            // whiteIndex is the count of white keys to the left - seam at whiteIndex * whiteKeyWidth.
             const auto seamX = static_cast<float>(whiteIndex) * whiteKeyWidth;
             const auto bounds = juce::Rectangle<float>(seamX - blackKeyWidth * 0.5f, pianoTop,
                 blackKeyWidth, blackKeyHeight);
-            const auto isActive = activePitchClasses[static_cast<std::size_t>(pc)];
+            const auto isChord = chordPitchClasses[static_cast<std::size_t>(pc)];
+            const auto isScale = scalePitchClasses[static_cast<std::size_t>(pc)];
+            const auto roleCount = (isChord ? 1 : 0) + (isScale ? 1 : 0);
+            const auto singleFill = roleCount == 1;
 
-            // Drop shadow under the black key - grounds it on the white keys.
             {
                 juce::Path shadow;
                 const auto shadowBounds = bounds.translated(0.f, 1.5f).expanded(0.5f, 1.f);
@@ -1142,40 +1527,26 @@ void MidiEditor::paintPianoKeyboard(juce::Graphics& g) const
             keyPath.addRoundedRectangle(bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight(),
                 kBlackKeyBottomRadius, kBlackKeyBottomRadius, false, false, true, true);
 
-            if (isActive)
-            {
-                juce::ColourGradient fill(accent.brighter(0.35f), 0.f, bounds.getY(),
-                    accent.darker(0.1f), 0.f, bounds.getBottom(), false);
-                g.setGradientFill(fill);
-                g.fillPath(keyPath);
+            paintKeyBodyFill(keyPath, bounds, isChord, isScale, true);
 
-                g.setColour(accent.brighter(0.5f).withAlpha(0.5f));
-                g.strokePath(keyPath, juce::PathStrokeType(1.2f));
-            }
-            else
-            {
-                // Glossy ebony: bright top face → deep body.
-                juce::ColourGradient body(juce::Colour(0xFF3A3D44), 0.f, bounds.getY(),
-                    juce::Colour(0xFF0A0B0D), 0.f, bounds.getBottom(), false);
-                body.addColour(0.18, juce::Colour(0xFF2A2C32));
-                body.addColour(0.55, juce::Colour(0xFF141518));
-                g.setGradientFill(body);
-                g.fillPath(keyPath);
-
-                // Narrow top specular highlight.
-                g.setColour(juce::Colours::white.withAlpha(0.14f));
-                g.fillRoundedRectangle(bounds.reduced(1.5f, 0.f).withHeight(3.5f)
-                    .withY(bounds.getY() + 1.f), 1.f);
-
-                // Side bevels.
-                g.setColour(juce::Colours::white.withAlpha(0.08f));
-                g.fillRect(juce::Rectangle<float>(bounds.getX() + 0.5f, bounds.getY() + 4.f, 1.f, bounds.getHeight() - 8.f));
-                g.setColour(juce::Colours::black.withAlpha(0.5f));
-                g.fillRect(juce::Rectangle<float>(bounds.getRight() - 1.5f, bounds.getY() + 4.f, 1.f, bounds.getHeight() - 8.f));
-            }
-
-            g.setColour(isActive ? accent.darker(0.3f) : juce::Colours::black.withAlpha(0.9f));
+            g.setColour(singleFill
+                ? (isChord ? chordColour : scaleColour).darker(0.3f)
+                : juce::Colours::black.withAlpha(0.9f));
             g.strokePath(keyPath, juce::PathStrokeType(0.9f));
+
+            paintRoleMarkers(bounds, isChord, isScale, true);
+
+            const auto label = kNoteNames[static_cast<std::size_t>(pc)];
+            const auto labelBounds = bounds.withTrimmedTop(bounds.getHeight() * 0.42f).reduced(0.5f, 2.f);
+            g.setFont(nui::Theme::newFont(nui::Theme::REGULAR, nui::Theme::SMALL));
+            const auto labelColour = noteTextColourForKey(true, singleFill);
+            if (singleFill)
+            {
+                g.setColour(juce::Colours::black.withAlpha(0.3f));
+                g.drawText(label, labelBounds.translated(0.f, 0.5f), juce::Justification::centredBottom, true);
+            }
+            g.setColour(labelColour);
+            g.drawText(label, labelBounds, juce::Justification::centredBottom, true);
             continue;
         }
         ++whiteIndex;
@@ -1247,19 +1618,42 @@ int MidiEditor::hitTestNote(juce::Point<float> position) const
 
 int MidiEditor::hitTestChordBlock(juce::Point<float> position) const
 {
-    const auto laneTop = _contentArea.getBottom();
-    if (position.y < laneTop || position.y > laneTop + kChordLaneHeight)
-        return -1;
-
     for (int i = static_cast<int>(_chordBlocks.size()) - 1; i >= 0; --i)
     {
-        const auto& block = _chordBlocks[static_cast<std::size_t>(i)];
-        const auto x0 = beatToX(block.startBeat);
-        const auto x1 = beatToX(block.startBeat + effectiveChordBlockLength(block));
-        if (position.x >= x0 && position.x <= x1)
+        if (getChordBlockBounds(_chordBlocks[static_cast<std::size_t>(i)]).contains(position))
             return i;
     }
     return -1;
+}
+
+int MidiEditor::hitTestChordDeleteButton(juce::Point<float> position) const
+{
+    // Hit the × zone whenever the pointer is over it. The disc is only *painted* when the chip is
+    // hovered/selected, so casual clicks on the right edge of a cold chip still move/select
+    // (the × zone is a small disc inset from the edge). Hovering first is the intended path.
+    for (int i = static_cast<int>(_chordBlocks.size()) - 1; i >= 0; --i)
+    {
+        if (getChordDeleteButtonBounds(_chordBlocks[static_cast<std::size_t>(i)]).contains(position))
+            return i;
+    }
+    return -1;
+}
+
+juce::Rectangle<float> MidiEditor::getChordBlockBounds(const ChordBlockData& block) const
+{
+    const auto laneTop = _contentArea.getBottom();
+    const auto length = effectiveChordBlockLength(block);
+    return juce::Rectangle<float>(beatToX(block.startBeat), laneTop + 2.f,
+        juce::jmax(1.f, static_cast<float>(length * static_cast<double>(_pixelsPerBeat)) - 4.f),
+        kChordLaneHeight - 4.f);
+}
+
+juce::Rectangle<float> MidiEditor::getChordDeleteButtonBounds(const ChordBlockData& block) const
+{
+    const auto chip = getChordBlockBounds(block);
+    return juce::Rectangle<float>(kChordDeleteButtonSize, kChordDeleteButtonSize)
+        .withCentre({ chip.getRight() - kChordDeleteButtonPad - kChordDeleteButtonSize * 0.5f,
+            chip.getCentreY() });
 }
 
 bool MidiEditor::isInNoteResizeZone(int noteIndex, juce::Point<float> position, bool leftEdge) const
@@ -1346,6 +1740,10 @@ void MidiEditor::applyDragAt(juce::Point<float> position)
         _loopEndBeat = juce::jmax(_loopStartBeat + kSnapBeats, snappedEnd); // no upper bound
         repaint();
     }
+    else if (_dragMode == DragMode::SeekPlayhead)
+    {
+        seekPlayheadFromPosition(position);
+    }
 }
 
 void MidiEditor::updateHoverState(juce::Point<float> position)
@@ -1353,15 +1751,28 @@ void MidiEditor::updateHoverState(juce::Point<float> position)
     const auto noteIndex = hitTestNote(position);
     const auto isLeftResize = noteIndex >= 0 && isInNoteResizeZone(noteIndex, position, true);
     const auto isResize = noteIndex >= 0 && (isLeftResize || isInNoteResizeZone(noteIndex, position, false));
+    const auto chordIndex = hitTestChordBlock(position);
+    // Delete × is shown for hovered/selected chips - while the pointer is over a chip it counts
+    // as hovered for geometry, so the button lights up as soon as you enter the chip.
+    const auto overDelete = chordIndex >= 0
+        && getChordDeleteButtonBounds(_chordBlocks[static_cast<std::size_t>(chordIndex)]).contains(position);
 
-    if (noteIndex == _hoveredNoteIndex && isResize == _hoveredIsResizeZone && isLeftResize == _hoveredResizeIsLeftEdge)
+    if (noteIndex == _hoveredNoteIndex
+        && isResize == _hoveredIsResizeZone
+        && isLeftResize == _hoveredResizeIsLeftEdge
+        && chordIndex == _hoveredChordIndex
+        && overDelete == _hoveredChordDeleteButton)
         return;
 
     _hoveredNoteIndex = noteIndex;
     _hoveredIsResizeZone = isResize;
     _hoveredResizeIsLeftEdge = isLeftResize;
+    _hoveredChordIndex = chordIndex;
+    _hoveredChordDeleteButton = overDelete;
 
-    if (noteIndex < 0)
+    if (overDelete)
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    else if (noteIndex < 0 && chordIndex < 0)
         setMouseCursor(juce::MouseCursor::NormalCursor);
     else if (isResize)
         setMouseCursor(juce::MouseCursor::LeftRightResizeCursor);

@@ -55,6 +55,15 @@ AppLayout::AppLayout(ndsp::ParameterManager& parameterManager, PluginAudioProces
             dragContainer->performExternalDragDropOfFiles({ midiFile.getFullPathName() }, false);
     });
 
+    _scaleSuggestionPanel.setKeyAndScale(_keyScaleSelector.getKey(), _keyScaleSelector.getScale());
+    _scaleSuggestionPanel.setOnScaleChosen([this](theory::Key key, theory::Scale scale)
+    {
+        // Apply without firing onKeyScaleChanged twice: setKeyAndScale is silent, then we
+        // drive the same side effects as a picker change.
+        _keyScaleSelector.setKeyAndScale(key, scale);
+        onKeyScaleChanged(key, scale);
+    });
+
     _progressionEditor.addListener(this);
     _progressionEditor.setScale(_keyScaleSelector.getScale());
 
@@ -86,7 +95,8 @@ AppLayout::AppLayout(ndsp::ParameterManager& parameterManager, PluginAudioProces
     _mainSection.getLayout().setFixedColumnWidth(8, 24.f);
     _mainSection.getLayout().setFixedColumnWidth(1, 32.f);
     _mainSection.getLayout().setFixedColumnWidth(7, 32.f);
-    _mainSection.getLayout().setFixedColumnWidth(4, 450.f);
+    // Holds search + Chord/Scale mode + All toggle + Key/Scale pickers (see KeyScaleSelector).
+    _mainSection.getLayout().setFixedColumnWidth(4, 820.f);
     _mainSection.getLayout().setFixedRowHeight(0, 60.f);
     // Row 1 (voicing) is fixed; height is driven by setVoicingVisibility (0 when closed).
 
@@ -94,8 +104,13 @@ AppLayout::AppLayout(ndsp::ParameterManager& parameterManager, PluginAudioProces
     _mainSection.getLayout().addComponent(_keyScaleSelector, 0, 4, 1, 1);
     _mainSection.getLayout().addComponent(_voicingSelector, 1, 0, 9, 1);
     _mainSection.getLayout().addComponent(_chordBrowser, 2, 3, 3, 1);
+    // Next-chord and scale-suggestion share the same layout cell; visibility tracks Chord/Scale mode.
     _mainSection.getLayout().addComponent(_nextChordPanel, 3, 1, 7, 1);
+    _mainSection.getLayout().addComponent(_scaleSuggestionPanel, 3, 1, 7, 1);
     _mainSection.getLayout().addComponent(_progressionEditor, 4, 1, 7, 1);
+
+    updateSuggestionPanelVisibility();
+    refreshScaleSuggestions();
 
     // Drag handles between browser|next-chords and next-chords|progression. Both adjacent rows
     // must be flexible (setResizableLine rejects fixed tracks on either side of the line).
@@ -217,10 +232,47 @@ void AppLayout::onKeyScaleChanged(theory::Key key, theory::Scale scale)
 
     _chordBrowser.setKeyAndScale(key, scale);
     _nextChordPanel.setKeyAndScale(key, scale);
+    _scaleSuggestionPanel.setKeyAndScale(key, scale);
     _progressionEditor.setScale(scale);
     refreshNextChordSequenceContext();
+    refreshScaleSuggestions();
 
     syncStateToValueTree();
+}
+
+void AppLayout::onSearchChanged(const std::string& query,
+                                component::KeyScaleSelector::SearchMode mode,
+                                component::KeyScaleSelector::SearchScope scope)
+{
+    juce::ignoreUnused(mode);
+
+    _scaleSuggestionPanel.setSearchQuery(query);
+    _scaleSuggestionPanel.setSearchScope(
+        scope == component::KeyScaleSelector::SearchScope::All
+            ? theory::NextScaleGenerator::Pool::All
+            : theory::NextScaleGenerator::Pool::Predicted);
+
+    updateSuggestionPanelVisibility();
+}
+
+void AppLayout::updateSuggestionPanelVisibility()
+{
+    const bool showScales =
+        _keyScaleSelector.getSearchMode() == component::KeyScaleSelector::SearchMode::Scale;
+
+    _scaleSuggestionPanel.setVisible(showScales);
+    _nextChordPanel.setVisible(!showScales);
+}
+
+void AppLayout::refreshScaleSuggestions()
+{
+    _scaleSuggestionPanel.setKeyAndScale(_keyScaleSelector.getKey(), _keyScaleSelector.getScale());
+    _scaleSuggestionPanel.setCurrentChord(_nextChordPanel.getCurrentChord());
+    _scaleSuggestionPanel.setSearchQuery(_keyScaleSelector.getSearchQuery());
+    _scaleSuggestionPanel.setSearchScope(
+        _keyScaleSelector.getSearchScope() == component::KeyScaleSelector::SearchScope::All
+            ? theory::NextScaleGenerator::Pool::All
+            : theory::NextScaleGenerator::Pool::Predicted);
 }
 
 void AppLayout::onChordChanged(theory::Degree degree, const theory::Chord& newChord)
@@ -292,6 +344,7 @@ void AppLayout::setCurrentChordForSuggestions(const theory::Chord& chord, bool p
         _progressionEditor.getMidiEditorState(), keyScale, &chord);
 
     _nextChordPanel.setCurrentChord(chord, std::move(sequence));
+    _scaleSuggestionPanel.setCurrentChord(chord);
 }
 
 void AppLayout::syncNextChordFromProgressionTail()

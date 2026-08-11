@@ -6,8 +6,10 @@
 #include <juce_core/juce_core.h>
 
 #include "Theory/ChordType.h"
+#include "Theory/Key.h"
 #include "Theory/NoteName.h"
 #include "Theory/ProgressionSlot.h"
+#include "Theory/Scale.h"
 
 namespace theory
 {
@@ -46,6 +48,12 @@ struct MidiEditorChordBlockState
     ChordType frozenType = ChordType::Triad;
     std::vector<NoteName> frozenNotes;
 
+    // Optional scale attached by dragging a scale suggestion onto this chord. When set, the
+    // piano highlights that scale's pitch classes under the playhead. Absent on legacy sessions.
+    bool hasAttachedScale = false;
+    Key attachedScaleKey = Key::C;
+    Scale attachedScale = Scale::Major;
+
     bool operator==(const MidiEditorChordBlockState& other) const
     {
         return id == other.id && label == other.label
@@ -54,7 +62,10 @@ struct MidiEditorChordBlockState
             && sourceSlot == other.sourceSlot
             && frozenSymbol == other.frozenSymbol
             && frozenType == other.frozenType
-            && frozenNotes.size() == other.frozenNotes.size();
+            && frozenNotes.size() == other.frozenNotes.size()
+            && hasAttachedScale == other.hasAttachedScale
+            && attachedScaleKey == other.attachedScaleKey
+            && attachedScale == other.attachedScale;
     }
 };
 

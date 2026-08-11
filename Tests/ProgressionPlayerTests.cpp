@@ -187,4 +187,47 @@ TEST_CASE("ProgressionPlayer: isPlaying/getPlayheadBeat reflect state through pl
 
     player.stop();
     CHECK_FALSE(player.isPlaying());
+    // Stop preserves the parked playhead (does not rewind).
+    CHECK(player.getPlayheadBeat() == Catch::Approx(2.5));
+}
+
+TEST_CASE("ProgressionPlayer::seek parks the playhead and play() resumes from inside the loop", "[ProgressionPlayer]")
+{
+    ProgressionPlayer player;
+    player.setNotes({ { 60, 2.0, 1.0 } });
+    player.setLoopBounds(0.0, 4.0);
+
+    player.seek(2.0);
+    CHECK(player.getPlayheadBeat() == Catch::Approx(2.0));
+    CHECK_FALSE(player.isPlaying());
+
+    player.play();
+    CHECK(player.isPlaying());
+    CHECK(player.getPlayheadBeat() == Catch::Approx(2.0));
+
+    juce::MidiBuffer buffer;
+    // Consume the pending seek at the start of the first audio block.
+    player.renderNextBlock(buffer, 512, kSampleRate, kBpm);
+    CHECK(player.getPlayheadBeat() == Catch::Approx(2.0 + 512.0 / 22050.0).margin(1.0e-6));
+
+    // Seek while playing jumps mid-block on the next render.
+    player.seek(0.0);
+    buffer.clear();
+    player.renderNextBlock(buffer, 512, kSampleRate, kBpm);
+    CHECK(player.getPlayheadBeat() == Catch::Approx(512.0 / 22050.0).margin(1.0e-6));
+}
+
+TEST_CASE("ProgressionPlayer::setBpm clamps and is read back", "[ProgressionPlayer]")
+{
+    ProgressionPlayer player;
+    CHECK(player.getBpm() == Catch::Approx(120.0));
+
+    player.setBpm(96.0);
+    CHECK(player.getBpm() == Catch::Approx(96.0));
+
+    player.setBpm(10.0); // below floor
+    CHECK(player.getBpm() == Catch::Approx(20.0));
+
+    player.setBpm(999.0); // above ceiling
+    CHECK(player.getBpm() == Catch::Approx(400.0));
 }

@@ -10,6 +10,7 @@
 #include "Component/KeyScaleSelector.h"
 #include "Component/NextChordPanel.h"
 #include "Component/ProgressionEditor.h"
+#include "Component/ScaleSuggestionPanel.h"
 #include "Component/SettingsWindow.h"
 #include "Component/SynthEditor.h"
 #include "Component/VoicingSelector.h"
@@ -37,6 +38,9 @@ private:
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
 
     void onKeyScaleChanged(theory::Key key, theory::Scale scale) override;
+    void onSearchChanged(const std::string& query,
+                         component::KeyScaleSelector::SearchMode mode,
+                         component::KeyScaleSelector::SearchScope scope) override;
     void onChordChanged(theory::Degree degree, const theory::Chord& newChord) override;
     void onChordDragStarted(theory::Degree degree, const theory::Chord& chord) override;
     void onChordPreviewRequested(theory::Degree degree, const theory::Chord& chord) override;
@@ -76,6 +80,12 @@ private:
     // Rebuilds phrase-memory from the progression sequencer without changing the current chord.
     void refreshNextChordSequenceContext();
 
+    // Shows next-chord vs scale-suggestion panels from the header Chord/Scale search mode.
+    void updateSuggestionPanelVisibility();
+
+    // Pushes current key/scale/chord + search query/scope into the scale-suggestion panel.
+    void refreshScaleSuggestions();
+
     // Re-derives the voicing selector's arrow-target x from the currently open degree's card -
     // called after the layout changes for any reason (new degree opened, or a resize while
     // already open). No-op while the selector is closed.
@@ -99,6 +109,7 @@ private:
     component::KeyScaleSelector _keyScaleSelector;
     component::ChordDegreeBrowser _chordBrowser;
     component::NextChordPanel _nextChordPanel { "next-chord-panel" };
+    component::ScaleSuggestionPanel _scaleSuggestionPanel { "scale-suggestion-panel" };
     component::VoicingSelector _voicingSelector { "voicing-selector" };
     component::ProgressionEditor _progressionEditor;
     component::SynthEditor _synthEditor;

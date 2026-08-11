@@ -8,8 +8,10 @@
 
 #include "Audio/ProgressionPlayer.h"
 #include "Theory/Chord.h"
+#include "Theory/Key.h"
 #include "Theory/MidiEditorState.h"
 #include "Theory/ProgressionSlot.h"
+#include "Theory/Scale.h"
 
 namespace component
 {
@@ -17,16 +19,14 @@ namespace component
 // A piano-roll MIDI note editor: a scrollable/zoomable pitch grid (pitch-labeled gutter on the
 // left, beat/bar ruler on top), a "chord lane" strip under the grid, and a horizontal key strip
 // under that. The bottom strip is a real multi-octave piano (white keys + overlapping black keys,
-// letter labels, Chordz-style); chord-under-playhead pitch classes highlight blue by default
-// (later modes can overlay scales on the same strip). The left gutter stays a piano-roll pitch
-// ruler and is independent of the bottom piano. Dropping a
+// letter labels, Chordz-style); chord tones under the playhead highlight in PRIMARY blue, and any
+// scale attached to that chord highlights in the user-configurable scale colour. Dropping a
 // ChordCard's exported .mid file onto it (see AppLayout's in-flight-drag-map resolution) adds a
 // labeled chord block to the lane and splits the chord into individually movable/resizable note
-// blocks in the grid above, via addChordAtBeat(). Owns its own in-memory note/chord-block state -
-// getState()/restoreState() bridge that to/from theory::MidiEditorState, the pure-data shape
-// Theory::SessionState (DAW project persistence) and Theory::MidiExporter (exact-content drag
-// export) both consume; ProgressionEditor is the only other component that reaches into this class
-// directly (for presets - see its own loadPreset/getPopulatedSlots).
+// blocks in the grid above, via addChordAtBeat(). Dragging a scale suggestion (internal DND
+// "chordsTheoryScale|…") onto a chord chip attaches that scale to the chord. Owns its own
+// in-memory note/chord-block state - getState()/restoreState() bridge that to/from
+// theory::MidiEditorState.
 //
 // Hand-paints everything itself (no juce::Viewport) - there's no existing precedent in this
 // codebase or nierika_dsp for a Viewport scrolling on both axes with a frozen gutter/ruler synced
@@ -36,6 +36,7 @@ namespace component
 // scroll-offset member state directly.
 class MidiEditor : public nui::Component,
                     public juce::FileDragAndDropTarget,
+                    public juce::DragAndDropTarget,
                     public juce::ScrollBar::Listener,
                     private juce::Timer
 {
@@ -80,6 +81,7 @@ public:
 
     void paint(juce::Graphics&) override;
     void resized() override;
+    void changeListenerCallback(juce::ChangeBroadcaster* source) override;
 
     // Snaps to the whole-bar (4-beat) cell startBeat falls in, then splits chord into N note
     // blocks (via theory::NoteConvertor::voiceChordCloseToMiddleC) plus one chord-lane block
@@ -122,10 +124,32 @@ public:
     [[nodiscard]] double getLoopStartBeat() const { return _loopStartBeat; }
     [[nodiscard]] double getLoopEndBeat() const { return _loopEndBeat; }
 
+    // Parks/moves the playhead (and live-seeks if currently playing). beat is snapped to the start
+    // of its bar. No-op without a ProgressionPlayer.
+    void seekPlayheadToBeat(double beat);
+    [[nodiscard]] double getPlayheadBeat() const;
+
+    // Sequencer tempo (BPM) for progression playback - forwarded to ProgressionPlayer.
+    void setBpm(double bpm);
+    [[nodiscard]] double getBpm() const;
+
     // Pitch classes (0-11) belonging to whatever is sounding under the UI playhead position -
     // live piano-roll notes active at that beat, or the chord block covering it when notes have
     // been deleted. Used by the bottom mini-piano highlight (and unit-tested directly).
     [[nodiscard]] std::array<bool, 12> getPlayheadChordPitchClasses() const;
+
+    // Pitch classes of the scale attached to the chord under the playhead (empty if none).
+    [[nodiscard]] std::array<bool, 12> getPlayheadScalePitchClasses() const;
+
+    // Attach / clear a scale on a chord-lane block (e.g. after a scale-suggestion drop).
+    void attachScaleToChordBlock(int chordBlockIndex, theory::Key key, theory::Scale scale);
+    void clearScaleFromChordBlock(int chordBlockIndex);
+
+    // Drag payload prefix for scale suggestions: "chordsTheoryScale|<keyJson>|<scaleJson>".
+    static constexpr const char* kScaleDragPrefix = "chordsTheoryScale|";
+    [[nodiscard]] static bool tryParseScaleDragDescription(const juce::var& description,
+                                                           theory::Key& outKey,
+                                                           theory::Scale& outScale);
 
     void addListener(Listener* listener);
     void removeListener(Listener* listener);
@@ -134,6 +158,13 @@ public:
     void fileDragEnter(const juce::StringArray& files, int x, int y) override;
     void fileDragExit(const juce::StringArray& files) override;
     void filesDropped(const juce::StringArray& files, int x, int y) override;
+
+    // Internal DND for scale suggestions dropped onto chord chips.
+    bool isInterestedInDragSource(const SourceDetails& dragSourceDetails) override;
+    void itemDragEnter(const SourceDetails& dragSourceDetails) override;
+    void itemDragMove(const SourceDetails& dragSourceDetails) override;
+    void itemDragExit(const SourceDetails& dragSourceDetails) override;
+    void itemDropped(const SourceDetails& dragSourceDetails) override;
 
     void scrollBarMoved(juce::ScrollBar* scrollBarThatHasMoved, double newRangeStart) override;
 
@@ -146,6 +177,7 @@ public:
     void mouseDoubleClick(const juce::MouseEvent&) override;
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     void mouseMagnify(const juce::MouseEvent&, float scaleFactor) override;
+    bool keyPressed(const juce::KeyPress& key) override;
 
 private:
     struct MidiNoteBlock
@@ -168,9 +200,12 @@ private:
         theory::ProgressionSlot sourceSlot; // frozen at drop time - degree + the resolved chord's
                                              // popularityOrder; never re-resolved live afterward
         theory::Chord frozenChord; // full harmony at drop time (for next-chord context)
+        bool hasAttachedScale = false;
+        theory::Key attachedScaleKey = theory::Key::C;
+        theory::Scale attachedScale = theory::Scale::Major;
     };
 
-    enum class DragMode { None, MoveNote, ResizeNoteStart, ResizeNoteEnd, MoveChordBlock, ResizeLoopStart, ResizeLoopEnd };
+    enum class DragMode { None, MoveNote, ResizeNoteStart, ResizeNoteEnd, MoveChordBlock, ResizeLoopStart, ResizeLoopEnd, SeekPlayhead };
 
     void timerCallback() override; // drag-triggered auto-scroll, and while playing, playhead repaint
 
@@ -191,12 +226,21 @@ private:
     [[nodiscard]] int yToPitch(float y) const noexcept;
     [[nodiscard]] static double snapBeat(double beat) noexcept;
 
-    // Same beat the playhead line uses (live while playing, else loop start).
+    // Same beat the playhead line uses (player playhead when available, else loop start).
     [[nodiscard]] double getUiPlayheadBeat() const;
+
+    // Snaps beat to the containing bar's start (whole bars of kBeatsPerBar).
+    [[nodiscard]] static double snapBeatToBar(double beat) noexcept;
+
+    void seekPlayheadFromPosition(juce::Point<float> position);
+
+    // Chord-lane block covering beat, if any (used for scale attach + playhead scale lookup).
+    [[nodiscard]] int findChordBlockIndexAtBeat(double beat) const;
 
     // hit-testing
     [[nodiscard]] int hitTestNote(juce::Point<float>) const;
     [[nodiscard]] int hitTestChordBlock(juce::Point<float>) const;
+    [[nodiscard]] int hitTestChordDeleteButton(juce::Point<float>) const;
     [[nodiscard]] bool isInNoteResizeZone(int noteIndex, juce::Point<float>, bool leftEdge) const;
     [[nodiscard]] bool isInLoopHandleZone(juce::Point<float>, bool startHandle) const;
 
@@ -206,6 +250,13 @@ private:
     // creation, this is computed fresh everywhere the block's effective length matters (painting,
     // hit-testing, collision detection against new drops).
     [[nodiscard]] double effectiveChordBlockLength(const ChordBlockData& block) const;
+
+    // Chord-lane chip geometry (label pill + hover delete ×).
+    [[nodiscard]] juce::Rectangle<float> getChordBlockBounds(const ChordBlockData& block) const;
+    [[nodiscard]] juce::Rectangle<float> getChordDeleteButtonBounds(const ChordBlockData& block) const;
+
+    // Removes the chord-lane block and every piano-roll note tagged with its id.
+    void removeChordBlockAt(int index);
 
     // gestures
     void applyDragAt(juce::Point<float> position);
@@ -251,6 +302,9 @@ private:
     int _dragStartMidiNote = 60;
 
     int _hoveredNoteIndex = -1;
+    int _hoveredChordIndex = -1;
+    bool _hoveredChordDeleteButton = false;
+    int _selectedChordIndex = -1;
     bool _hoveredIsResizeZone = false;
     bool _hoveredResizeIsLeftEdge = false;
     bool _isHovering = false;
