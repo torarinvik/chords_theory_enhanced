@@ -8,8 +8,10 @@
 
 #include "Audio/ProgressionPlayer.h"
 #include "Theory/Chord.h"
+#include "Theory/Key.h"
 #include "Theory/MidiEditorState.h"
 #include "Theory/ProgressionSlot.h"
+#include "Theory/Scale.h"
 
 namespace component
 {
@@ -17,16 +19,14 @@ namespace component
 // A piano-roll MIDI note editor: a scrollable/zoomable pitch grid (pitch-labeled gutter on the
 // left, beat/bar ruler on top), a "chord lane" strip under the grid, and a horizontal key strip
 // under that. The bottom strip is a real multi-octave piano (white keys + overlapping black keys,
-// letter labels, Chordz-style); chord-under-playhead pitch classes highlight blue by default
-// (later modes can overlay scales on the same strip). The left gutter stays a piano-roll pitch
-// ruler and is independent of the bottom piano. Dropping a
+// letter labels, Chordz-style); chord tones under the playhead highlight in PRIMARY blue, and any
+// scale attached to that chord highlights in the user-configurable scale colour. Dropping a
 // ChordCard's exported .mid file onto it (see AppLayout's in-flight-drag-map resolution) adds a
 // labeled chord block to the lane and splits the chord into individually movable/resizable note
-// blocks in the grid above, via addChordAtBeat(). Owns its own in-memory note/chord-block state -
-// getState()/restoreState() bridge that to/from theory::MidiEditorState, the pure-data shape
-// Theory::SessionState (DAW project persistence) and Theory::MidiExporter (exact-content drag
-// export) both consume; ProgressionEditor is the only other component that reaches into this class
-// directly (for presets - see its own loadPreset/getPopulatedSlots).
+// blocks in the grid above, via addChordAtBeat(). Dragging a scale suggestion (internal DND
+// "chordsTheoryScale|…") onto a chord chip attaches that scale to the chord. Owns its own
+// in-memory note/chord-block state - getState()/restoreState() bridge that to/from
+// theory::MidiEditorState.
 //
 // Hand-paints everything itself (no juce::Viewport) - there's no existing precedent in this
 // codebase or nierika_dsp for a Viewport scrolling on both axes with a frozen gutter/ruler synced
@@ -36,6 +36,7 @@ namespace component
 // scroll-offset member state directly.
 class MidiEditor : public nui::Component,
                     public juce::FileDragAndDropTarget,
+                    public juce::DragAndDropTarget,
                     public juce::ScrollBar::Listener,
                     private juce::Timer
 {
@@ -137,6 +138,19 @@ public:
     // been deleted. Used by the bottom mini-piano highlight (and unit-tested directly).
     [[nodiscard]] std::array<bool, 12> getPlayheadChordPitchClasses() const;
 
+    // Pitch classes of the scale attached to the chord under the playhead (empty if none).
+    [[nodiscard]] std::array<bool, 12> getPlayheadScalePitchClasses() const;
+
+    // Attach / clear a scale on a chord-lane block (e.g. after a scale-suggestion drop).
+    void attachScaleToChordBlock(int chordBlockIndex, theory::Key key, theory::Scale scale);
+    void clearScaleFromChordBlock(int chordBlockIndex);
+
+    // Drag payload prefix for scale suggestions: "chordsTheoryScale|<keyJson>|<scaleJson>".
+    static constexpr const char* kScaleDragPrefix = "chordsTheoryScale|";
+    [[nodiscard]] static bool tryParseScaleDragDescription(const juce::var& description,
+                                                           theory::Key& outKey,
+                                                           theory::Scale& outScale);
+
     void addListener(Listener* listener);
     void removeListener(Listener* listener);
 
@@ -144,6 +158,13 @@ public:
     void fileDragEnter(const juce::StringArray& files, int x, int y) override;
     void fileDragExit(const juce::StringArray& files) override;
     void filesDropped(const juce::StringArray& files, int x, int y) override;
+
+    // Internal DND for scale suggestions dropped onto chord chips.
+    bool isInterestedInDragSource(const SourceDetails& dragSourceDetails) override;
+    void itemDragEnter(const SourceDetails& dragSourceDetails) override;
+    void itemDragMove(const SourceDetails& dragSourceDetails) override;
+    void itemDragExit(const SourceDetails& dragSourceDetails) override;
+    void itemDropped(const SourceDetails& dragSourceDetails) override;
 
     void scrollBarMoved(juce::ScrollBar* scrollBarThatHasMoved, double newRangeStart) override;
 
@@ -179,6 +200,9 @@ private:
         theory::ProgressionSlot sourceSlot; // frozen at drop time - degree + the resolved chord's
                                              // popularityOrder; never re-resolved live afterward
         theory::Chord frozenChord; // full harmony at drop time (for next-chord context)
+        bool hasAttachedScale = false;
+        theory::Key attachedScaleKey = theory::Key::C;
+        theory::Scale attachedScale = theory::Scale::Major;
     };
 
     enum class DragMode { None, MoveNote, ResizeNoteStart, ResizeNoteEnd, MoveChordBlock, ResizeLoopStart, ResizeLoopEnd, SeekPlayhead };
@@ -209,6 +233,9 @@ private:
     [[nodiscard]] static double snapBeatToBar(double beat) noexcept;
 
     void seekPlayheadFromPosition(juce::Point<float> position);
+
+    // Chord-lane block covering beat, if any (used for scale attach + playhead scale lookup).
+    [[nodiscard]] int findChordBlockIndexAtBeat(double beat) const;
 
     // hit-testing
     [[nodiscard]] int hitTestNote(juce::Point<float>) const;

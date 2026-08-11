@@ -18,6 +18,7 @@ using theory::MidiEditorState;
 using theory::NoteConvertor;
 using theory::ProgressionSlot;
 using theory::Scale;
+// theory::Key / Scale also used via theory:: namespace in attach-scale tests
 
 namespace
 {
@@ -528,6 +529,45 @@ TEST_CASE("MidiEditor::setBpm forwards to the progression player", "[MidiEditor]
     editor.setBpm(96.0);
     CHECK(editor.getBpm() == Catch::Approx(96.0));
     CHECK(player.getBpm() == Catch::Approx(96.0));
+}
+
+TEST_CASE("MidiEditor: attaching a scale to a chord block is round-tripped via getState/restoreState", "[MidiEditor]")
+{
+    MidiEditor editor("test-midi-editor");
+    editor.setBounds(0, 0, 800, 400);
+    editor.addChordAtBeat(0.0, getTestChord(), testSlot(getTestChord()));
+
+    editor.attachScaleToChordBlock(0, theory::Key::A, theory::Scale::Dorian);
+
+    const auto state = editor.getState();
+    REQUIRE(state.chordBlocks.size() == 1);
+    CHECK(state.chordBlocks[0].hasAttachedScale);
+    CHECK(state.chordBlocks[0].attachedScaleKey == theory::Key::A);
+    CHECK(state.chordBlocks[0].attachedScale == theory::Scale::Dorian);
+
+    MidiEditor restored("test-midi-editor-restored");
+    restored.setBounds(0, 0, 800, 400);
+    restored.restoreState(state);
+
+    const auto again = restored.getState();
+    REQUIRE(again.chordBlocks.size() == 1);
+    CHECK(again.chordBlocks[0].hasAttachedScale);
+    CHECK(again.chordBlocks[0].attachedScaleKey == theory::Key::A);
+    CHECK(again.chordBlocks[0].attachedScale == theory::Scale::Dorian);
+
+    // Scale tones under playhead at beat 0: A Dorian root is pitch class 9.
+    const auto scalePcs = restored.getPlayheadScalePitchClasses();
+    CHECK(scalePcs[9]); // A
+}
+
+TEST_CASE("MidiEditor: tryParseScaleDragDescription parses scale payload", "[MidiEditor]")
+{
+    theory::Key key = theory::Key::C;
+    theory::Scale scale = theory::Scale::Major;
+    CHECK(MidiEditor::tryParseScaleDragDescription("chordsTheoryScale|Db|Dorian", key, scale));
+    CHECK(key == theory::Key::Db);
+    CHECK(scale == theory::Scale::Dorian);
+    CHECK_FALSE(MidiEditor::tryParseScaleDragDescription("not-a-scale", key, scale));
 }
 
 TEST_CASE("MidiEditor::startPlayback on an empty editor is a no-op", "[MidiEditor]")

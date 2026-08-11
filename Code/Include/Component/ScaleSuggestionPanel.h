@@ -46,6 +46,8 @@ private:
     public:
         Row(const std::string& identifier, ScaleSuggestionPanel& owner, theory::ScaleSuggestion suggestion, int rowIndex);
         void paint(juce::Graphics& g) override;
+        void mouseDown(const juce::MouseEvent& event) override;
+        void mouseDrag(const juce::MouseEvent& event) override;
         void mouseUp(const juce::MouseEvent& event) override;
         void setSuggestion(theory::ScaleSuggestion suggestion);
 
@@ -53,6 +55,8 @@ private:
         ScaleSuggestionPanel& _owner;
         theory::ScaleSuggestion _suggestion;
         int _rowIndex = 0;
+        bool _dragGestureStarted = false;
+        static constexpr float kDragStartThreshold = 6.f;
     };
 
     class ListContent : public juce::Component

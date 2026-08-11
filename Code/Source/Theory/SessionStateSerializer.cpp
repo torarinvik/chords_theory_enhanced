@@ -27,6 +27,8 @@ namespace
     const juce::Identifier kIdProp { "id" };
     const juce::Identifier kLabelProp { "label" };
     const juce::Identifier kPopularityOrderProp { "popularityOrder" };
+    const juce::Identifier kAttachedScaleKeyProp { "attachedScaleKey" };
+    const juce::Identifier kAttachedScaleProp { "attachedScale" };
 
     template <typename T, typename ParseFn>
     bool tryParse(const juce::String& text, ParseFn parse, T& out)
@@ -86,6 +88,11 @@ juce::ValueTree SessionStateSerializer::toValueTree(const SessionState& state)
         blockTree.setProperty(kLengthBeatsProp, block.lengthBeats, nullptr);
         blockTree.setProperty(kDegreeProp, juce::String(getDegreeLabel(block.sourceSlot.degree)), nullptr);
         blockTree.setProperty(kPopularityOrderProp, block.sourceSlot.popularityOrder, nullptr);
+        if (block.hasAttachedScale)
+        {
+            blockTree.setProperty(kAttachedScaleKeyProp, juce::String(getKeyJsonKey(block.attachedScaleKey)), nullptr);
+            blockTree.setProperty(kAttachedScaleProp, juce::String(getScaleJsonKey(block.attachedScale)), nullptr);
+        }
         chordBlocksTree.appendChild(blockTree, nullptr);
     }
     midiEditorStateTree.appendChild(chordBlocksTree, nullptr);
@@ -139,6 +146,17 @@ SessionState SessionStateSerializer::fromValueTree(const juce::ValueTree& tree)
         block.startBeat = static_cast<double>(blockTree.getProperty(kStartBeatProp));
         block.lengthBeats = static_cast<double>(blockTree.getProperty(kLengthBeatsProp));
         block.sourceSlot = ProgressionSlot { degree, static_cast<int>(blockTree.getProperty(kPopularityOrderProp)) };
+
+        Key attachedKey = Key::C;
+        Scale attachedScale = Scale::Major;
+        if (tryParse(blockTree.getProperty(kAttachedScaleKeyProp).toString(), parseKey, attachedKey)
+            && tryParse(blockTree.getProperty(kAttachedScaleProp).toString(), parseScale, attachedScale))
+        {
+            block.hasAttachedScale = true;
+            block.attachedScaleKey = attachedKey;
+            block.attachedScale = attachedScale;
+        }
+
         state.progressionEditorState.chordBlocks.push_back(block);
     }
 

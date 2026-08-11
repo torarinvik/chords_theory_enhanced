@@ -6,7 +6,10 @@
 #include <limits>
 
 #include "AppSettings.h"
+#include "Theory/ChordDatabase.h"
+#include "Theory/Key.h"
 #include "Theory/NoteConvertor.h"
+#include "Theory/Scale.h"
 
 namespace component
 {
@@ -352,6 +355,9 @@ theory::MidiEditorState MidiEditor::getState() const
         out.frozenSymbol = block.frozenChord.symbol;
         out.frozenType = block.frozenChord.type;
         out.frozenNotes = block.frozenChord.notes;
+        out.hasAttachedScale = block.hasAttachedScale;
+        out.attachedScaleKey = block.attachedScaleKey;
+        out.attachedScale = block.attachedScale;
         state.chordBlocks.push_back(std::move(out));
     }
 
@@ -386,6 +392,9 @@ void MidiEditor::restoreState(const theory::MidiEditorState& state)
         data.frozenChord.type = block.frozenType;
         data.frozenChord.popularityOrder = block.sourceSlot.popularityOrder;
         data.frozenChord.notes = block.frozenNotes;
+        data.hasAttachedScale = block.hasAttachedScale;
+        data.attachedScaleKey = block.attachedScaleKey;
+        data.attachedScale = block.attachedScale;
         _chordBlocks.push_back(std::move(data));
     }
 
@@ -514,18 +523,97 @@ std::array<bool, 12> MidiEditor::getPlayheadChordPitchClasses() const
         return pitchClasses;
 
     // Fall back to the chord block covering this beat (label still present, notes maybe deleted).
-    for (const auto& block : _chordBlocks)
+    const auto blockIndex = findChordBlockIndexAtBeat(beat);
+    if (blockIndex >= 0)
     {
-        const auto length = effectiveChordBlockLength(block);
-        if (beat < block.startBeat || beat >= block.startBeat + length)
-            continue;
-
-        for (const auto& tone : block.frozenChord.notes)
+        for (const auto& tone : _chordBlocks[static_cast<std::size_t>(blockIndex)].frozenChord.notes)
             pitchClasses[static_cast<std::size_t>(juce::jlimit(0, 11, tone.getPitchClass()))] = true;
-        break;
     }
 
     return pitchClasses;
+}
+
+std::array<bool, 12> MidiEditor::getPlayheadScalePitchClasses() const
+{
+    std::array<bool, 12> pitchClasses {};
+    pitchClasses.fill(false);
+
+    const auto blockIndex = findChordBlockIndexAtBeat(getUiPlayheadBeat());
+    if (blockIndex < 0)
+        return pitchClasses;
+
+    const auto& block = _chordBlocks[static_cast<std::size_t>(blockIndex)];
+    if (!block.hasAttachedScale)
+        return pitchClasses;
+
+    const auto& data = theory::ChordDatabase::getInstance().get(block.attachedScaleKey, block.attachedScale);
+    for (const auto& note : data.scaleNotes)
+        pitchClasses[static_cast<std::size_t>(juce::jlimit(0, 11, note.getPitchClass()))] = true;
+
+    return pitchClasses;
+}
+
+int MidiEditor::findChordBlockIndexAtBeat(double beat) const
+{
+    for (int i = 0; i < static_cast<int>(_chordBlocks.size()); ++i)
+    {
+        const auto& block = _chordBlocks[static_cast<std::size_t>(i)];
+        const auto length = effectiveChordBlockLength(block);
+        if (beat >= block.startBeat && beat < block.startBeat + length)
+            return i;
+    }
+    return -1;
+}
+
+void MidiEditor::attachScaleToChordBlock(int chordBlockIndex, theory::Key key, theory::Scale scale)
+{
+    if (chordBlockIndex < 0 || chordBlockIndex >= static_cast<int>(_chordBlocks.size()))
+        return;
+
+    auto& block = _chordBlocks[static_cast<std::size_t>(chordBlockIndex)];
+    block.hasAttachedScale = true;
+    block.attachedScaleKey = key;
+    block.attachedScale = scale;
+    repaint();
+    notifyContentChanged();
+}
+
+void MidiEditor::clearScaleFromChordBlock(int chordBlockIndex)
+{
+    if (chordBlockIndex < 0 || chordBlockIndex >= static_cast<int>(_chordBlocks.size()))
+        return;
+
+    auto& block = _chordBlocks[static_cast<std::size_t>(chordBlockIndex)];
+    if (!block.hasAttachedScale)
+        return;
+
+    block.hasAttachedScale = false;
+    repaint();
+    notifyContentChanged();
+}
+
+bool MidiEditor::tryParseScaleDragDescription(const juce::var& description, theory::Key& outKey, theory::Scale& outScale)
+{
+    const auto text = description.toString();
+    if (!text.startsWith(kScaleDragPrefix))
+        return false;
+
+    const auto payload = text.fromFirstOccurrenceOf(kScaleDragPrefix, false, false);
+    const auto keyText = payload.upToFirstOccurrenceOf("|", false, false);
+    const auto scaleText = payload.fromFirstOccurrenceOf("|", false, false);
+    if (keyText.isEmpty() || scaleText.isEmpty())
+        return false;
+
+    try
+    {
+        outKey = theory::parseKey(keyText.toStdString());
+        outScale = theory::parseScale(scaleText.toStdString());
+        return true;
+    }
+    catch (const std::invalid_argument&)
+    {
+        return false;
+    }
 }
 
 void MidiEditor::addListener(Listener* listener)
@@ -598,6 +686,54 @@ void MidiEditor::filesDropped(const juce::StringArray& files, int x, int y)
     const auto dropBeat = juce::jmax(0.0, static_cast<double>(xToBeat(static_cast<float>(x))));
     for (auto* listener : _listeners)
         listener->onChordFileDropped(dropBeat, files[0]);
+}
+
+bool MidiEditor::isInterestedInDragSource(const SourceDetails& dragSourceDetails)
+{
+    theory::Key key;
+    theory::Scale scale;
+    return tryParseScaleDragDescription(dragSourceDetails.description, key, scale);
+}
+
+void MidiEditor::itemDragEnter(const SourceDetails& dragSourceDetails)
+{
+    itemDragMove(dragSourceDetails);
+}
+
+void MidiEditor::itemDragMove(const SourceDetails& dragSourceDetails)
+{
+    const auto pos = dragSourceDetails.localPosition.toFloat();
+    const auto chordIndex = hitTestChordBlock(pos);
+    if (chordIndex != _hoveredChordIndex)
+    {
+        _hoveredChordIndex = chordIndex;
+        repaint();
+    }
+}
+
+void MidiEditor::itemDragExit(const SourceDetails&)
+{
+    _hoveredChordIndex = -1;
+    repaint();
+}
+
+void MidiEditor::itemDropped(const SourceDetails& dragSourceDetails)
+{
+    theory::Key key;
+    theory::Scale scale;
+    if (!tryParseScaleDragDescription(dragSourceDetails.description, key, scale))
+        return;
+
+    const auto pos = dragSourceDetails.localPosition.toFloat();
+    auto chordIndex = hitTestChordBlock(pos);
+    if (chordIndex < 0)
+        chordIndex = findChordBlockIndexAtBeat(xToBeat(pos.x));
+
+    if (chordIndex >= 0)
+        attachScaleToChordBlock(chordIndex, key, scale);
+
+    _hoveredChordIndex = -1;
+    repaint();
 }
 
 void MidiEditor::scrollBarMoved(juce::ScrollBar* scrollBarThatHasMoved, double newRangeStart)
@@ -963,8 +1099,24 @@ void MidiEditor::paintChordLane(juce::Graphics& g) const
         if (showDelete)
             labelBounds.removeFromRight(kChordDeleteButtonSize + kChordDeleteButtonPad * 2.f);
 
-        g.setColour(textColour);
-        g.drawText(block.label, labelBounds.reduced(4.f, 0.f), juce::Justification::centred, true);
+        if (block.hasAttachedScale)
+        {
+            // Chord name on the left, attached scale on the right (before the ×).
+            auto nameArea = labelBounds.reduced(4.f, 0.f);
+            auto scaleArea = nameArea.removeFromRight(juce::jmin(nameArea.getWidth() * 0.55f, 110.f));
+            g.setColour(textColour);
+            g.drawText(block.label, nameArea, juce::Justification::centredLeft, true);
+
+            const auto scaleText = theory::getKeyLabel(block.attachedScaleKey) + " "
+                + juce::translate(theory::getScaleTranslationKey(block.attachedScale)).toStdString();
+            g.setColour(AppSettings::getInstance().getScaleHighlightColour());
+            g.drawText(scaleText, scaleArea, juce::Justification::centredRight, true);
+        }
+        else
+        {
+            g.setColour(textColour);
+            g.drawText(block.label, labelBounds.reduced(4.f, 0.f), juce::Justification::centred, true);
+        }
 
         if (showDelete)
         {
@@ -1218,8 +1370,88 @@ void MidiEditor::paintPianoKeyboard(juce::Graphics& g) const
     const auto whiteKeyWidth = pianoWidth / static_cast<float>(whiteKeyCount);
     const auto blackKeyWidth = whiteKeyWidth * 0.55f;
     const auto blackKeyHeight = kPianoKeyboardHeight * 0.60f;
-    const auto activePitchClasses = getPlayheadChordPitchClasses();
-    const auto accent = nui::Theme::newColor(nui::Theme::ThemeColor::PRIMARY).asJuce();
+    const auto chordPitchClasses = getPlayheadChordPitchClasses();
+    const auto scalePitchClasses = getPlayheadScalePitchClasses();
+    const auto chordColour = AppSettings::getInstance().getChordHighlightColour();
+    const auto scaleColour = AppSettings::getInstance().getScaleHighlightColour();
+
+    // Single membership → full-key wash. Two or more → keep neutral key + role dots (scale then chord).
+    const auto paintKeyBodyFill = [&](juce::Path& keyPath, juce::Rectangle<float> bounds,
+                                      bool isChord, bool isScale, bool isBlackKey)
+    {
+        const auto roleCount = (isChord ? 1 : 0) + (isScale ? 1 : 0);
+        if (roleCount == 1)
+        {
+            const auto colour = isChord ? chordColour : scaleColour;
+            juce::ColourGradient fill(colour.brighter(isBlackKey ? 0.35f : 0.28f), 0.f, bounds.getY(),
+                colour.darker(isBlackKey ? 0.1f : 0.18f), 0.f, bounds.getBottom(), false);
+            g.setGradientFill(fill);
+            g.fillPath(keyPath);
+            g.setColour(colour.withAlpha(isChord ? 0.4f : 0.3f));
+            g.strokePath(keyPath, juce::PathStrokeType(isChord ? 2.2f : 1.6f));
+            return;
+        }
+
+        // Neutral body (idle ivory / ebony) when multi-role or idle.
+        if (isBlackKey)
+        {
+            juce::ColourGradient body(juce::Colour(0xFF3A3D44), 0.f, bounds.getY(),
+                juce::Colour(0xFF0A0B0D), 0.f, bounds.getBottom(), false);
+            body.addColour(0.18, juce::Colour(0xFF2A2C32));
+            body.addColour(0.55, juce::Colour(0xFF141518));
+            g.setGradientFill(body);
+            g.fillPath(keyPath);
+            g.setColour(juce::Colours::white.withAlpha(0.14f));
+            g.fillRoundedRectangle(bounds.reduced(1.5f, 0.f).withHeight(3.5f)
+                .withY(bounds.getY() + 1.f), 1.f);
+            g.setColour(juce::Colours::white.withAlpha(0.08f));
+            g.fillRect(juce::Rectangle<float>(bounds.getX() + 0.5f, bounds.getY() + 4.f, 1.f, bounds.getHeight() - 8.f));
+            g.setColour(juce::Colours::black.withAlpha(0.5f));
+            g.fillRect(juce::Rectangle<float>(bounds.getRight() - 1.5f, bounds.getY() + 4.f, 1.f, bounds.getHeight() - 8.f));
+        }
+        else
+        {
+            juce::ColourGradient body(juce::Colour(0xFFFAFAFC), 0.f, bounds.getY(),
+                juce::Colour(0xFFE4E6EA), 0.f, bounds.getBottom(), false);
+            body.addColour(0.72, juce::Colour(0xFFEFF0F3));
+            g.setGradientFill(body);
+            g.fillPath(keyPath);
+            g.setColour(juce::Colours::white.withAlpha(0.55f));
+            g.fillRect(juce::Rectangle<float>(bounds.getX(), bounds.getY() + 1.f, 1.f, bounds.getHeight() - 3.f));
+            g.setColour(juce::Colours::black.withAlpha(0.08f));
+            g.fillRect(juce::Rectangle<float>(bounds.getRight() - 1.f, bounds.getY() + 1.f, 1.f, bounds.getHeight() - 3.f));
+            g.setColour(juce::Colours::black.withAlpha(0.06f));
+            g.fillRect(juce::Rectangle<float>(bounds.getX() + 1.f, bounds.getBottom() - 4.f,
+                bounds.getWidth() - 2.f, 3.f));
+        }
+    };
+
+    const auto paintRoleMarkers = [&](juce::Rectangle<float> bounds, bool isChord, bool isScale, bool isBlackKey)
+    {
+        // Only when 2+ roles apply (single-role uses full-key colour instead).
+        if (!(isChord && isScale))
+            return;
+
+        const auto diameter = isBlackKey ? 5.5f : 6.5f;
+        const auto gap = 3.f;
+        const auto totalW = diameter * 2.f + gap;
+        const auto cy = bounds.getBottom() - (isBlackKey ? 9.f : 14.f);
+        auto x = bounds.getCentreX() - totalW * 0.5f;
+
+        const auto drawDot = [&](juce::Colour colour)
+        {
+            const auto dot = juce::Rectangle<float>(x, cy - diameter * 0.5f, diameter, diameter);
+            g.setColour(colour);
+            g.fillEllipse(dot);
+            g.setColour(juce::Colours::white.withAlpha(isBlackKey ? 0.55f : 0.35f));
+            g.drawEllipse(dot, 0.9f);
+            x += diameter + gap;
+        };
+
+        // Fixed order: scale (left) then chord (right).
+        drawDot(scaleColour);
+        drawDot(chordColour);
+    };
 
     // --- White keys ----------------------------------------------------------
     auto whiteIndex = 0;
@@ -1232,57 +1464,31 @@ void MidiEditor::paintPianoKeyboard(juce::Graphics& g) const
         const auto x = static_cast<float>(whiteIndex) * whiteKeyWidth;
         const auto bounds = juce::Rectangle<float>(x + kWhiteKeyGap * 0.5f, pianoTop,
             juce::jmax(1.f, whiteKeyWidth - kWhiteKeyGap), kPianoKeyboardHeight - 1.f);
-        const auto isActive = activePitchClasses[static_cast<std::size_t>(pc)];
+        const auto isChord = chordPitchClasses[static_cast<std::size_t>(pc)];
+        const auto isScale = scalePitchClasses[static_cast<std::size_t>(pc)];
+        const auto roleCount = (isChord ? 1 : 0) + (isScale ? 1 : 0);
+        const auto singleFill = roleCount == 1;
 
         juce::Path keyPath;
         keyPath.addRoundedRectangle(bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight(),
             kWhiteKeyBottomRadius, kWhiteKeyBottomRadius, false, false, true, true);
 
-        if (isActive)
-        {
-            // Luminous vertical wash - brighter near the top lip like a lit key.
-            juce::ColourGradient fill(accent.brighter(0.28f), 0.f, bounds.getY(),
-                accent.darker(0.18f), 0.f, bounds.getBottom(), false);
-            g.setGradientFill(fill);
-            g.fillPath(keyPath);
+        paintKeyBodyFill(keyPath, bounds, isChord, isScale, false);
 
-            // Soft outer glow so active keys "lift" off the bed.
-            g.setColour(accent.withAlpha(0.35f));
-            g.strokePath(keyPath, juce::PathStrokeType(2.5f));
-        }
-        else
-        {
-            // Ivory body: cool top highlight → slightly warmer body → soft foot shadow.
-            juce::ColourGradient body(juce::Colour(0xFFFAFAFC), 0.f, bounds.getY(),
-                juce::Colour(0xFFE4E6EA), 0.f, bounds.getBottom(), false);
-            body.addColour(0.72, juce::Colour(0xFFEFF0F3));
-            g.setGradientFill(body);
-            g.fillPath(keyPath);
-
-            // Left specular edge + right contact shadow (cheap 3D bevel).
-            g.setColour(juce::Colours::white.withAlpha(0.55f));
-            g.fillRect(juce::Rectangle<float>(bounds.getX(), bounds.getY() + 1.f, 1.f, bounds.getHeight() - 3.f));
-            g.setColour(juce::Colours::black.withAlpha(0.08f));
-            g.fillRect(juce::Rectangle<float>(bounds.getRight() - 1.f, bounds.getY() + 1.f, 1.f, bounds.getHeight() - 3.f));
-
-            // Front lip - darker strip at the bottom of the key face.
-            g.setColour(juce::Colours::black.withAlpha(0.06f));
-            g.fillRect(juce::Rectangle<float>(bounds.getX() + 1.f, bounds.getBottom() - 4.f,
-                bounds.getWidth() - 2.f, 3.f));
-        }
-
-        // Key outline
-        g.setColour(isActive ? accent.darker(0.25f).withAlpha(0.9f) : juce::Colour(0xFF9A9DA3).withAlpha(0.85f));
+        g.setColour(singleFill
+            ? (isChord ? chordColour : scaleColour).darker(0.25f).withAlpha(0.9f)
+            : juce::Colour(0xFF9A9DA3).withAlpha(0.85f));
         g.strokePath(keyPath, juce::PathStrokeType(0.8f));
 
-        // Letter at the bottom of the key face (C D E F G A B).
+        paintRoleMarkers(bounds, isChord, isScale, false);
+
         const auto label = kNoteNames[static_cast<std::size_t>(pc)];
         const auto labelBounds = bounds.withTrimmedTop(kPianoKeyboardHeight * 0.58f).reduced(1.f, 3.f);
         g.setFont(nui::Theme::newFont(nui::Theme::REGULAR, nui::Theme::SMALL));
-        const auto labelColour = noteTextColourForKey(false, isActive);
-        if (isActive)
+        // Multi-role keeps ivory body → normal text colour; single fill needs contrast text.
+        const auto labelColour = noteTextColourForKey(false, singleFill);
+        if (singleFill)
         {
-            // Soft shadow under the glyph so it stays legible on bright blue.
             g.setColour(juce::Colours::black.withAlpha(0.25f));
             g.drawText(label, labelBounds.translated(0.f, 0.5f), juce::Justification::centredBottom, false);
         }
@@ -1299,13 +1505,14 @@ void MidiEditor::paintPianoKeyboard(juce::Graphics& g) const
         const auto pc = midi % 12;
         if (kIsBlackKey[static_cast<std::size_t>(pc)])
         {
-            // whiteIndex is the count of white keys to the left - seam at whiteIndex * whiteKeyWidth.
             const auto seamX = static_cast<float>(whiteIndex) * whiteKeyWidth;
             const auto bounds = juce::Rectangle<float>(seamX - blackKeyWidth * 0.5f, pianoTop,
                 blackKeyWidth, blackKeyHeight);
-            const auto isActive = activePitchClasses[static_cast<std::size_t>(pc)];
+            const auto isChord = chordPitchClasses[static_cast<std::size_t>(pc)];
+            const auto isScale = scalePitchClasses[static_cast<std::size_t>(pc)];
+            const auto roleCount = (isChord ? 1 : 0) + (isScale ? 1 : 0);
+            const auto singleFill = roleCount == 1;
 
-            // Drop shadow under the black key - grounds it on the white keys.
             {
                 juce::Path shadow;
                 const auto shadowBounds = bounds.translated(0.f, 1.5f).expanded(0.5f, 1.f);
@@ -1320,47 +1527,20 @@ void MidiEditor::paintPianoKeyboard(juce::Graphics& g) const
             keyPath.addRoundedRectangle(bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight(),
                 kBlackKeyBottomRadius, kBlackKeyBottomRadius, false, false, true, true);
 
-            if (isActive)
-            {
-                juce::ColourGradient fill(accent.brighter(0.35f), 0.f, bounds.getY(),
-                    accent.darker(0.1f), 0.f, bounds.getBottom(), false);
-                g.setGradientFill(fill);
-                g.fillPath(keyPath);
+            paintKeyBodyFill(keyPath, bounds, isChord, isScale, true);
 
-                g.setColour(accent.brighter(0.5f).withAlpha(0.5f));
-                g.strokePath(keyPath, juce::PathStrokeType(1.2f));
-            }
-            else
-            {
-                // Glossy ebony: bright top face → deep body.
-                juce::ColourGradient body(juce::Colour(0xFF3A3D44), 0.f, bounds.getY(),
-                    juce::Colour(0xFF0A0B0D), 0.f, bounds.getBottom(), false);
-                body.addColour(0.18, juce::Colour(0xFF2A2C32));
-                body.addColour(0.55, juce::Colour(0xFF141518));
-                g.setGradientFill(body);
-                g.fillPath(keyPath);
-
-                // Narrow top specular highlight.
-                g.setColour(juce::Colours::white.withAlpha(0.14f));
-                g.fillRoundedRectangle(bounds.reduced(1.5f, 0.f).withHeight(3.5f)
-                    .withY(bounds.getY() + 1.f), 1.f);
-
-                // Side bevels.
-                g.setColour(juce::Colours::white.withAlpha(0.08f));
-                g.fillRect(juce::Rectangle<float>(bounds.getX() + 0.5f, bounds.getY() + 4.f, 1.f, bounds.getHeight() - 8.f));
-                g.setColour(juce::Colours::black.withAlpha(0.5f));
-                g.fillRect(juce::Rectangle<float>(bounds.getRight() - 1.5f, bounds.getY() + 4.f, 1.f, bounds.getHeight() - 8.f));
-            }
-
-            g.setColour(isActive ? accent.darker(0.3f) : juce::Colours::black.withAlpha(0.9f));
+            g.setColour(singleFill
+                ? (isChord ? chordColour : scaleColour).darker(0.3f)
+                : juce::Colours::black.withAlpha(0.9f));
             g.strokePath(keyPath, juce::PathStrokeType(0.9f));
 
-            // C-major sharp names on black keys (C#, D#, F#, G#, A#).
+            paintRoleMarkers(bounds, isChord, isScale, true);
+
             const auto label = kNoteNames[static_cast<std::size_t>(pc)];
             const auto labelBounds = bounds.withTrimmedTop(bounds.getHeight() * 0.42f).reduced(0.5f, 2.f);
             g.setFont(nui::Theme::newFont(nui::Theme::REGULAR, nui::Theme::SMALL));
-            const auto labelColour = noteTextColourForKey(true, isActive);
-            if (isActive)
+            const auto labelColour = noteTextColourForKey(true, singleFill);
+            if (singleFill)
             {
                 g.setColour(juce::Colours::black.withAlpha(0.3f));
                 g.drawText(label, labelBounds.translated(0.f, 0.5f), juce::Justification::centredBottom, true);

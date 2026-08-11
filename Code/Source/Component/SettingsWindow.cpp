@@ -30,7 +30,7 @@ SettingsWindow::SettingsWindow(const std::string& identifier, nlayout::WindowsMa
     _layout.init({ 1, 1, 1 }, { 1 });
 
     _layout.setFixedRowHeight(0, 42.f);
-    _layout.setFixedRowHeight(1, 120.f);
+    _layout.setFixedRowHeight(1, 200.f);
     _layout.setFixedRowHeight(2, 90.f);
 
     _layout.addComponent(_title, 0, 0, 1, 1);

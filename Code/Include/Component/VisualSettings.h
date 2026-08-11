@@ -7,11 +7,11 @@
 namespace component
 {
 
-// Clickable colour chip used by VisualSettings for note-text colour.
-class NoteTextColourSwatch : public juce::Component
+// Clickable colour chip used by VisualSettings.
+class ColourSwatch : public juce::Component
 {
 public:
-    explicit NoteTextColourSwatch(const std::string& componentId);
+    explicit ColourSwatch(const std::string& componentId);
     void setColour(juce::Colour colour);
     [[nodiscard]] juce::Colour getColour() const { return _colour; }
 
@@ -35,10 +35,16 @@ public:
     void resized() override;
 
 private:
+    enum class ColourTarget
+    {
+        NoteText,
+        ScaleHighlight,
+        ChordHighlight,
+    };
+
     void onSelectionChanged(const std::string& componentID, int selectedIndex) override;
-    // Handles Theme, AppSettings, AppLocalisation, and the temporary ColourSelector call-out.
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
-    void openNoteTextColourPicker();
+    void openColourPicker(ColourTarget target, ColourSwatch& swatch, juce::Colour current);
 
     nelement::Text _title { "visual-settings-title", "", juce::translate("visual_settings_title").toStdString() };
 
@@ -46,9 +52,15 @@ private:
     nelement::TwoWaySwitch _themeSwitch { "settings-theme-toggle", juce::translate("visual_settings_dark_theme").toStdString(), juce::translate("visual_settings_light_theme").toStdString() };
 
     nelement::Text _noteTextColourLabel { "settings-note-text-colour-label", "", juce::translate("visual_settings_note_text_colour_label").toStdString() };
-    NoteTextColourSwatch _noteTextColourSwatch { "settings-note-text-colour-swatch" };
+    ColourSwatch _noteTextColourSwatch { "settings-note-text-colour-swatch" };
 
-    // Owned while the call-out is open; cleared when the selector is destroyed with the box.
+    nelement::Text _chordHighlightColourLabel { "settings-chord-highlight-colour-label", "", juce::translate("visual_settings_chord_highlight_colour_label").toStdString() };
+    ColourSwatch _chordHighlightColourSwatch { "settings-chord-highlight-colour-swatch" };
+
+    nelement::Text _scaleHighlightColourLabel { "settings-scale-highlight-colour-label", "", juce::translate("visual_settings_scale_highlight_colour_label").toStdString() };
+    ColourSwatch _scaleHighlightColourSwatch { "settings-scale-highlight-colour-swatch" };
+
+    ColourTarget _activeColourTarget = ColourTarget::NoteText;
     juce::Component::SafePointer<juce::ColourSelector> _activeColourSelector;
 
     nlayout::GridLayout<nui::Component> _layout { *this };

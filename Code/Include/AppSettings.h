@@ -25,6 +25,15 @@ public:
     [[nodiscard]] juce::Colour getNoteTextColour() const;
     void setNoteTextColour(juce::Colour colour);
 
+    // Colour used to highlight scale tones on the progression piano (under the playhead's chord
+    // scale). Distinct from chord highlight by default (soft green).
+    [[nodiscard]] juce::Colour getScaleHighlightColour() const;
+    void setScaleHighlightColour(juce::Colour colour);
+
+    // Colour used to highlight chord tones on the progression piano. Defaults to theme-like blue.
+    [[nodiscard]] juce::Colour getChordHighlightColour() const;
+    void setChordHighlightColour(juce::Colour colour);
+
     // Fired after any setter that should refresh UI (theme is also announced via nui::Theme).
     static juce::ChangeBroadcaster& getChangeBroadcaster();
 

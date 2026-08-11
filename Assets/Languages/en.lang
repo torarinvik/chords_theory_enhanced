@@ -7,6 +7,8 @@ countries: us gb au ca nz ie
 "visual_settings_dark_theme" = "Dark"
 "visual_settings_light_theme" = "Light"
 "visual_settings_note_text_colour_label" = "Note text colour"
+"visual_settings_chord_highlight_colour_label" = "Chord highlight colour"
+"visual_settings_scale_highlight_colour_label" = "Scale highlight colour"
 "language_settings_title" = "LANGUAGE"
 "chord_card_tooltip" = "Click to preview. Drag onto a DAW track or a progression slot."
 "chord_card_voicing_button_tooltip" = "Choose a different voicing or inversion"

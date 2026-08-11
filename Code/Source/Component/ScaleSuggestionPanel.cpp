@@ -1,6 +1,9 @@
 #include "Component/ScaleSuggestionPanel.h"
 
 #include "AppLocalisation.h"
+#include "Component/MidiEditor.h"
+#include "Theory/Key.h"
+#include "Theory/Scale.h"
 
 namespace component
 {
@@ -18,13 +21,41 @@ ScaleSuggestionPanel::Row::Row(const std::string& identifier,
     _suggestion(std::move(suggestion)),
     _rowIndex(rowIndex)
 {
-    setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    setMouseCursor(juce::MouseCursor::DraggingHandCursor);
 }
 
 void ScaleSuggestionPanel::Row::setSuggestion(theory::ScaleSuggestion suggestion)
 {
     _suggestion = std::move(suggestion);
     repaint();
+}
+
+void ScaleSuggestionPanel::Row::mouseDown(const juce::MouseEvent&)
+{
+    _dragGestureStarted = false;
+}
+
+void ScaleSuggestionPanel::Row::mouseDrag(const juce::MouseEvent& event)
+{
+    if (_dragGestureStarted)
+        return;
+
+    if (static_cast<float>(event.getDistanceFromDragStart()) < kDragStartThreshold)
+        return;
+
+    _dragGestureStarted = true;
+
+    auto* container = findParentComponentOfClass<juce::DragAndDropContainer>();
+    if (container == nullptr)
+        return;
+
+    // Payload consumed by MidiEditor::itemDropped — attach scale to the chord chip under drop.
+    const auto description = juce::String(MidiEditor::kScaleDragPrefix)
+        + theory::getKeyJsonKey(_suggestion.key)
+        + "|"
+        + theory::getScaleJsonKey(_suggestion.scale);
+
+    container->startDragging(description, this);
 }
 
 void ScaleSuggestionPanel::Row::paint(juce::Graphics& g)
@@ -56,9 +87,16 @@ void ScaleSuggestionPanel::Row::paint(juce::Graphics& g)
 
 void ScaleSuggestionPanel::Row::mouseUp(const juce::MouseEvent& event)
 {
+    if (_dragGestureStarted)
+    {
+        _dragGestureStarted = false;
+        return;
+    }
+
     if (!event.mouseWasClicked())
         return;
 
+    // Click (no drag) still applies the scale globally via Key/Scale pickers.
     if (_owner._onScaleChosen)
         _owner._onScaleChosen(_suggestion.key, _suggestion.scale);
 }
