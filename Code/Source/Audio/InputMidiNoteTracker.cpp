@@ -57,4 +57,16 @@ bool InputMidiNoteTracker::isNoteHeld(int midiNote) const noexcept
     return _held[static_cast<std::size_t>(midiNote)].load(std::memory_order_relaxed);
 }
 
+std::vector<int> InputMidiNoteTracker::getHeldNotes() const
+{
+    std::vector<int> notes;
+    notes.reserve(16);
+    for (int n = 0; n < kNumMidiNotes; ++n)
+    {
+        if (_held[static_cast<std::size_t>(n)].load(std::memory_order_relaxed))
+            notes.push_back(n);
+    }
+    return notes;
+}
+
 }

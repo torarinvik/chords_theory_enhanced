@@ -69,6 +69,7 @@ AppLayout::AppLayout(ndsp::ParameterManager& parameterManager, PluginAudioProces
 
     _progressionEditor.addListener(this);
     _progressionEditor.setScale(_keyScaleSelector.getScale());
+    _progressionEditor.setKey(_keyScaleSelector.getKey());
 
     _voicingSelector.addListener(this);
     _voicingSelector.setDismissExemptComponent(&_chordBrowser);
@@ -237,6 +238,7 @@ void AppLayout::onKeyScaleChanged(theory::Key key, theory::Scale scale)
     _nextChordPanel.setKeyAndScale(key, scale);
     _scaleSuggestionPanel.setKeyAndScale(key, scale);
     _progressionEditor.setScale(scale);
+    _progressionEditor.setKey(key);
     refreshNextChordSequenceContext();
     refreshScaleSuggestions();
 
@@ -540,6 +542,7 @@ void AppLayout::restoreStateFromValueTree()
     _chordBrowser.setKeyAndScale(state.key, state.scale);
     _nextChordPanel.setKeyAndScale(state.key, state.scale);
     _progressionEditor.setScale(state.scale);
+    _progressionEditor.setKey(state.key);
 
     for (const auto& [degree, chordSymbol] : state.degreeVoicings)
         _chordBrowser.setDegreeVoicing(degree, chordSymbol);

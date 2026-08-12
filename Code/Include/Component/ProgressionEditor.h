@@ -7,10 +7,12 @@
 
 #include "Audio/InputMidiNoteTracker.h"
 #include "Audio/ProgressionPlayer.h"
+#include "Component/LiveChordDisplay.h"
 #include "Component/MidiEditor.h"
 #include "Component/ProgressionDragHandle.h"
 #include "Component/ProgressionPresetPicker.h"
 #include "Theory/Chord.h"
+#include "Theory/Key.h"
 #include "Theory/MidiEditorState.h"
 #include "Theory/ProgressionPreset.h"
 #include "Theory/ProgressionSlot.h"
@@ -73,6 +75,9 @@ public:
     // note).
     void setScale(theory::Scale scale);
 
+    // Spelling context for the live chord detector (C# vs Db). Key alone; scale is unused here.
+    void setKey(theory::Key key);
+
     // Clears the MidiEditor and places preset.slots[i]'s resolved chord at bar i, in order - an
     // unresolvable slot (e.g. a degree absent under the current scale) simply leaves its bar empty
     // rather than shifting later slots to fill the gap.
@@ -123,6 +128,7 @@ private:
     juce::Slider _bpmSlider;
 
     ProgressionDragHandle _dragHandle;
+    LiveChordDisplay _liveChordDisplay;
     MidiEditor _midiEditor;
 
     nlayout::GridLayout<nui::Component> _layout { *this };

@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <vector>
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
@@ -24,6 +25,11 @@ public:
     void clear();
 
     [[nodiscard]] bool isNoteHeld(int midiNote) const noexcept;
+
+    // Message-thread snapshot of currently held notes (ascending MIDI order). Safe to call
+    // while the audio thread updates; individual notes may race by one block.
+    [[nodiscard]] std::vector<int> getHeldNotes() const;
+
     [[nodiscard]] std::uint32_t getGeneration() const noexcept
     {
         return _generation.load(std::memory_order_relaxed);

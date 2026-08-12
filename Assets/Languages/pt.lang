@@ -13,6 +13,7 @@ countries: pt br
 "audio_settings_title" = "ÁUDIO"
 "audio_settings_mute_label" = "Silenciar o plugin"
 "audio_settings_mute_tooltip" = "Silencia a saída de áudio do plugin. A saída MIDI e os destaques do piano continuam ativos."
+"live_chord_display_empty" = "Toque um acorde…"
 "language_settings_title" = "IDIOMA"
 "chord_card_tooltip" = "Clique para pré-ouvir. Arraste para uma faixa da DAW ou para um slot de progressão."
 "chord_card_voicing_button_tooltip" = "Escolher outra inversão ou voicing"

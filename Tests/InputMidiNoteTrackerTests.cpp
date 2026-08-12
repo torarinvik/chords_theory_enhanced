@@ -13,6 +13,7 @@ TEST_CASE("InputMidiNoteTracker starts with no notes held", "[InputMidiNoteTrack
     CHECK_FALSE(tracker.isNoteHeld(127));
     CHECK_FALSE(tracker.isNoteHeld(-1));
     CHECK_FALSE(tracker.isNoteHeld(128));
+    CHECK(tracker.getHeldNotes().empty());
     CHECK(tracker.getGeneration() == 0);
 }
 
@@ -28,6 +29,7 @@ TEST_CASE("InputMidiNoteTracker tracks note on and off", "[InputMidiNoteTracker]
     CHECK(tracker.isNoteHeld(60));
     CHECK(tracker.isNoteHeld(64));
     CHECK_FALSE(tracker.isNoteHeld(67));
+    CHECK(tracker.getHeldNotes() == std::vector<int> { 60, 64 });
     const auto genAfterOn = tracker.getGeneration();
     CHECK(genAfterOn > 0);
 
