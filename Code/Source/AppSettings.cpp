@@ -1,5 +1,7 @@
 #include "AppSettings.h"
 
+#include <atomic>
+
 namespace
 {
     const char* SHOW_STANDALONE_TITLE_KEY = "showStandaloneTitle";
@@ -8,9 +10,18 @@ namespace
     const char* NOTE_TEXT_COLOUR_KEY = "noteTextColour";
     const char* SCALE_HIGHLIGHT_COLOUR_KEY = "scaleHighlightColour";
     const char* CHORD_HIGHLIGHT_COLOUR_KEY = "chordHighlightColour";
+    const char* MIDI_INPUT_HIGHLIGHT_COLOUR_KEY = "midiInputHighlightColour";
+    const char* MUTED_KEY = "outputMuted";
 
     const char* THEME_MODE_LIGHT = "light";
     const char* THEME_MODE_DARK = "dark";
+
+    // Mirror of getInstance().getMuted() for the audio thread (no PropertiesFile / lock).
+    std::atomic<bool>& outputMutedFlag()
+    {
+        static std::atomic<bool> flag { false };
+        return flag;
+    }
 
     // Matches the previous hard-coded ivory-key label grey in MidiEditor.
     constexpr juce::uint32 kDefaultNoteTextColourArgb = 0xFF6A6E76;
@@ -18,6 +29,8 @@ namespace
     constexpr juce::uint32 kDefaultScaleHighlightColourArgb = 0xFF3D9B6E;
     // Matches Theme PRIMARY blue used previously for chord-tone piano fill.
     constexpr juce::uint32 kDefaultChordHighlightColourArgb = 0xFF3A607E;
+    // Warm amber for live MIDI input key fill (reads on ivory + ebony).
+    constexpr juce::uint32 kDefaultMidiInputHighlightColourArgb = 0xFFE09B2D;
 
     juce::String getAppName()
     {
@@ -135,6 +148,45 @@ void AppSettings::setChordHighlightColour(juce::Colour colour)
     getChangeBroadcaster().sendChangeMessage();
 }
 
+juce::Colour AppSettings::getMidiInputHighlightColour() const
+{
+    const auto stored = _properties.getValue(MIDI_INPUT_HIGHLIGHT_COLOUR_KEY, {});
+    if (stored.isEmpty())
+        return juce::Colour(kDefaultMidiInputHighlightColourArgb);
+
+    return juce::Colour::fromString(stored.startsWithChar('#') ? stored : ("#" + stored));
+}
+
+void AppSettings::setMidiInputHighlightColour(juce::Colour colour)
+{
+    _properties.setValue(MIDI_INPUT_HIGHLIGHT_COLOUR_KEY, colour.toDisplayString(true));
+    _properties.save();
+    getChangeBroadcaster().sendChangeMessage();
+}
+
+bool AppSettings::getMuted() const
+{
+    return _properties.getBoolValue(MUTED_KEY, false);
+}
+
+void AppSettings::setMuted(bool muted)
+{
+    _properties.setValue(MUTED_KEY, muted);
+    _properties.save();
+
+    // Only the process-wide singleton drives the audio-thread flag. Temp AppSettings used in
+    // unit tests write their own file and must not silence the live plugin under test by accident.
+    if (this == &getInstance())
+        outputMutedFlag().store(muted, std::memory_order_relaxed);
+
+    getChangeBroadcaster().sendChangeMessage();
+}
+
+bool AppSettings::isOutputMuted() noexcept
+{
+    return outputMutedFlag().load(std::memory_order_relaxed);
+}
+
 juce::ChangeBroadcaster& AppSettings::getChangeBroadcaster()
 {
     static juce::ChangeBroadcaster broadcaster;
@@ -143,7 +195,13 @@ juce::ChangeBroadcaster& AppSettings::getChangeBroadcaster()
 
 AppSettings& AppSettings::getInstance()
 {
-    static AppSettings& instance = *new AppSettings(getDefaultSettingsFile());
+    static AppSettings& instance = []() -> AppSettings&
+    {
+        auto* settings = new AppSettings(getDefaultSettingsFile());
+        // Seed the audio-thread flag once from the on-disk value at first use.
+        outputMutedFlag().store(settings->getMuted(), std::memory_order_relaxed);
+        return *settings;
+    }();
     return instance;
 }
 

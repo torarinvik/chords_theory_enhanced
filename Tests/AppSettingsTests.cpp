@@ -26,6 +26,8 @@ TEST_CASE("AppSettings returns sane defaults over a nonexistent file", "[AppSett
     CHECK(settings.getNoteTextColour() == juce::Colour(0xFF6A6E76));
     CHECK(settings.getScaleHighlightColour() == juce::Colour(0xFF3D9B6E));
     CHECK(settings.getChordHighlightColour() == juce::Colour(0xFF3A607E));
+    CHECK(settings.getMidiInputHighlightColour() == juce::Colour(0xFFE09B2D));
+    CHECK(settings.getMuted() == false);
 
     file.deleteFile();
 }
@@ -55,6 +57,14 @@ TEST_CASE("AppSettings round-trips each typed accessor", "[AppSettings]")
 
     settings.setChordHighlightColour(juce::Colours::magenta);
     CHECK(settings.getChordHighlightColour() == juce::Colours::magenta);
+
+    settings.setMidiInputHighlightColour(juce::Colours::yellow);
+    CHECK(settings.getMidiInputHighlightColour() == juce::Colours::yellow);
+
+    settings.setMuted(true);
+    CHECK(settings.getMuted() == true);
+    settings.setMuted(false);
+    CHECK(settings.getMuted() == false);
 
     file.deleteFile();
 }

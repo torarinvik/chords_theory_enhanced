@@ -8,6 +8,27 @@
 namespace component
 {
 
+namespace
+{
+    juce::String localisedReason(const theory::ScaleSuggestion& suggestion)
+    {
+        using theory::ScaleSuggestionReason;
+        switch (suggestion.reason)
+        {
+            case ScaleSuggestionReason::Parallel:
+                return juce::translate("scale_suggestion_reason_parallel");
+            case ScaleSuggestionReason::Relative:
+                return juce::translate("scale_suggestion_reason_relative");
+            case ScaleSuggestionReason::ContainsChord:
+                return juce::translate("scale_suggestion_reason_contains_chord")
+                    .replace("%chord%", suggestion.reasonChordName);
+            case ScaleSuggestionReason::Related:
+                return juce::translate("scale_suggestion_reason_related");
+        }
+        return juce::translate("scale_suggestion_reason_related");
+    }
+}
+
 // -----------------------------------------------------------------------------
 // Row
 // -----------------------------------------------------------------------------
@@ -78,7 +99,7 @@ void ScaleSuggestionPanel::Row::paint(juce::Graphics& g)
     g.drawText(_suggestion.label, nameArea.reduced(2, 0), juce::Justification::centredLeft, true);
 
     g.setColour(nui::Theme::newColor(nui::Theme::DISABLED).asJuce());
-    g.drawText(_suggestion.reasonLabel, reasonArea.reduced(4, 0), juce::Justification::centredLeft, true);
+    g.drawText(localisedReason(_suggestion), reasonArea.reduced(4, 0), juce::Justification::centredLeft, true);
 
     g.setColour(nui::Theme::newColor(nui::Theme::ACCENT).asJuce());
     g.drawText("F " + juce::String(_suggestion.fitPercent), fitArea.reduced(2, 0),
@@ -214,9 +235,11 @@ void ScaleSuggestionPanel::regenerate()
         _key, _scale, _currentChord, _pool, _query, 16);
 
     const auto currentLabel = juce::translate(theory::getScaleTranslationKey(_scale)).toStdString();
-    _subtitle.setText(
-        juce::translate("scale_suggestion_current_prefix").toStdString()
-            + " " + theory::getKeyLabel(_key) + " " + currentLabel);
+    juce::String subtitle = juce::translate("scale_suggestion_current_prefix")
+        + " " + theory::getKeyLabel(_key) + " " + currentLabel;
+    if (_currentChord.has_value() && !_currentChord->readableName.empty())
+        subtitle += "  ·  " + juce::String(_currentChord->readableName);
+    _subtitle.setText(subtitle.toStdString());
 
     _listContent.rebuildRows(_suggestions);
     _viewport.setViewPosition(0, 0);

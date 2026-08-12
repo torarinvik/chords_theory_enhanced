@@ -52,6 +52,7 @@ VisualSettings::VisualSettings(const std::string& identifier):
     _noteTextColourLabel.setJustificationType(juce::Justification::centredLeft);
     _chordHighlightColourLabel.setJustificationType(juce::Justification::centredLeft);
     _scaleHighlightColourLabel.setJustificationType(juce::Justification::centredLeft);
+    _midiInputHighlightColourLabel.setJustificationType(juce::Justification::centredLeft);
 
     _themeSwitch.addOnValueChangedListener(this);
     _themeSwitch.setSelectedIndex(AppSettings::getInstance().getThemeMode() == nui::Theme::Mode::LIGHT ? 1 : 0, juce::dontSendNotification);
@@ -77,18 +78,25 @@ VisualSettings::VisualSettings(const std::string& identifier):
         openColourPicker(ColourTarget::ScaleHighlight, _scaleHighlightColourSwatch, AppSettings::getInstance().getScaleHighlightColour());
     };
 
+    _midiInputHighlightColourSwatch.setColour(AppSettings::getInstance().getMidiInputHighlightColour());
+    _midiInputHighlightColourSwatch.onClick = [this]
+    {
+        openColourPicker(ColourTarget::MidiInputHighlight, _midiInputHighlightColourSwatch, AppSettings::getInstance().getMidiInputHighlightColour());
+    };
+
     AppLocalisation::getChangeBroadcaster().addChangeListener(this);
     AppSettings::getChangeBroadcaster().addChangeListener(this);
 
     _layout.setGap(8.f);
     _layout.setDisplayGrid(false);
-    _layout.init({ 1, 1, 1, 1, 1 }, { 1, 4 });
+    _layout.init({ 1, 1, 1, 1, 1, 1 }, { 1, 4 });
 
     _layout.setFixedRowHeight(0, 32.f);
     _layout.setFixedRowHeight(1, 36.f);
     _layout.setFixedRowHeight(2, 36.f);
     _layout.setFixedRowHeight(3, 36.f);
     _layout.setFixedRowHeight(4, 36.f);
+    _layout.setFixedRowHeight(5, 36.f);
 
     _layout.addComponent(_title, 0, 0, 2, 1);
     _layout.addComponent(_themeLabel, 1, 0, 1, 1);
@@ -99,6 +107,8 @@ VisualSettings::VisualSettings(const std::string& identifier):
     _layout.addComponent(_chordHighlightColourSwatch.getComponentID().toStdString(), _chordHighlightColourSwatch, 3, 1, 1, 1, 10);
     _layout.addComponent(_scaleHighlightColourLabel, 4, 0, 1, 1);
     _layout.addComponent(_scaleHighlightColourSwatch.getComponentID().toStdString(), _scaleHighlightColourSwatch, 4, 1, 1, 1, 10);
+    _layout.addComponent(_midiInputHighlightColourLabel, 5, 0, 1, 1);
+    _layout.addComponent(_midiInputHighlightColourSwatch.getComponentID().toStdString(), _midiInputHighlightColourSwatch, 5, 1, 1, 1, 10);
 
     _layout.setBottomBorder(_title.getComponentID().toStdString(), nui::Theme::newColor(nui::Theme::ThemeColor::BORDER).asJuce());
 }
@@ -176,6 +186,7 @@ void VisualSettings::changeListenerCallback(juce::ChangeBroadcaster* source)
         _noteTextColourSwatch.setColour(AppSettings::getInstance().getNoteTextColour());
         _chordHighlightColourSwatch.setColour(AppSettings::getInstance().getChordHighlightColour());
         _scaleHighlightColourSwatch.setColour(AppSettings::getInstance().getScaleHighlightColour());
+        _midiInputHighlightColourSwatch.setColour(AppSettings::getInstance().getMidiInputHighlightColour());
         if (auto* top = getTopLevelComponent())
             top->repaint();
         return;
@@ -193,6 +204,10 @@ void VisualSettings::changeListenerCallback(juce::ChangeBroadcaster* source)
             case ColourTarget::ChordHighlight:
                 AppSettings::getInstance().setChordHighlightColour(colour);
                 _chordHighlightColourSwatch.setColour(colour);
+                break;
+            case ColourTarget::MidiInputHighlight:
+                AppSettings::getInstance().setMidiInputHighlightColour(colour);
+                _midiInputHighlightColourSwatch.setColour(colour);
                 break;
             case ColourTarget::NoteText:
                 AppSettings::getInstance().setNoteTextColour(colour);
@@ -213,6 +228,7 @@ void VisualSettings::changeListenerCallback(juce::ChangeBroadcaster* source)
     _noteTextColourLabel.setText(juce::translate("visual_settings_note_text_colour_label").toStdString());
     _chordHighlightColourLabel.setText(juce::translate("visual_settings_chord_highlight_colour_label").toStdString());
     _scaleHighlightColourLabel.setText(juce::translate("visual_settings_scale_highlight_colour_label").toStdString());
+    _midiInputHighlightColourLabel.setText(juce::translate("visual_settings_midi_input_highlight_colour_label").toStdString());
 
     repaint();
 }

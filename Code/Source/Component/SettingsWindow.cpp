@@ -27,15 +27,19 @@ SettingsWindow::SettingsWindow(const std::string& identifier, nlayout::WindowsMa
 
     _layout.setGap(20.f);
     _layout.setDisplayGrid(false);
-    _layout.init({ 1, 1, 1 }, { 1 });
+    _layout.init({ 1, 1, 1, 1 }, { 1 });
 
     _layout.setFixedRowHeight(0, 42.f);
-    _layout.setFixedRowHeight(1, 200.f);
-    _layout.setFixedRowHeight(2, 90.f);
+    // Visual: title + theme + 4 colour rows (note / chord / scale / MIDI input).
+    _layout.setFixedRowHeight(1, 248.f);
+    // Audio: title + mute row.
+    _layout.setFixedRowHeight(2, 80.f);
+    _layout.setFixedRowHeight(3, 90.f);
 
     _layout.addComponent(_title, 0, 0, 1, 1);
     _layout.addComponent(_visualSettings, 1, 0, 1, 1);
-    _layout.addComponent(_languageSettings, 2, 0, 1, 1);
+    _layout.addComponent(_audioSettings, 2, 0, 1, 1);
+    _layout.addComponent(_languageSettings, 3, 0, 1, 1);
 
     _titleIcon.toFront(false);
     _closeButton.toFront(false);
@@ -101,7 +105,7 @@ void SettingsWindow::resized()
 juce::Rectangle<int> SettingsWindow::getCardBounds()
 {
     constexpr int maxCardWidth = 650;
-    constexpr int maxCardHeight = 480;
+    constexpr int maxCardHeight = 620;
 
     const auto margin = juce::jmax(32, juce::jmin(getWidth(), getHeight()) / 8);
     const auto available = getLocalBounds().reduced(margin);

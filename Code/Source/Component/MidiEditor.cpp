@@ -73,9 +73,12 @@ namespace
     }
 }
 
-MidiEditor::MidiEditor(const std::string& identifier, audio::ProgressionPlayer* progressionPlayer):
+MidiEditor::MidiEditor(const std::string& identifier,
+                       audio::ProgressionPlayer* progressionPlayer,
+                       audio::InputMidiNoteTracker* inputMidiNoteTracker):
     Component(identifier),
-    _progressionPlayer(progressionPlayer)
+    _progressionPlayer(progressionPlayer),
+    _inputMidiNoteTracker(inputMidiNoteTracker)
 {
     displayBackground(nui::Theme::ThemeColor::BACKGROUND, nui::Theme::getBorderRadius());
     displayBorder(nui::Theme::ThemeColor::BORDER, 1.f, nui::Theme::getBorderRadius(), 1.f);
@@ -98,6 +101,10 @@ MidiEditor::MidiEditor(const std::string& identifier, audio::ProgressionPlayer* 
     addMouseListener(this, true);
     setWantsKeyboardFocus(true);
     AppSettings::getChangeBroadcaster().addChangeListener(this);
+
+    // Live MIDI input highlighting needs a steady repaint pulse even when transport is stopped.
+    if (_inputMidiNoteTracker != nullptr)
+        startTimerHz(45);
 }
 
 MidiEditor::~MidiEditor()
@@ -435,7 +442,7 @@ void MidiEditor::stopPlayback()
 
     _progressionPlayer->stop();
 
-    if (_dragMode == DragMode::None)
+    if (_dragMode == DragMode::None && _inputMidiNoteTracker == nullptr)
         stopTimer();
 
     repaint();
@@ -863,9 +870,9 @@ void MidiEditor::mouseUp(const juce::MouseEvent& event)
     _draggedNoteIndex = -1;
     _draggedChordIndex = -1;
 
-    // The timer is now shared with playback repaint (see timerCallback) - only stop it here if
-    // nothing else still needs it running.
-    if (!isPlaying())
+    // Timer is shared with playback repaint and live MIDI-input piano highlight - only stop when
+    // neither is needed.
+    if (!isPlaying() && _inputMidiNoteTracker == nullptr)
         stopTimer();
 
     refreshScrollRanges();
@@ -1012,10 +1019,18 @@ void MidiEditor::timerCallback()
 
     if (_dragMode == DragMode::None)
     {
-        // No drag in progress - the timer can only still be running because playback is active
-        // (see startPlayback/stopPlayback), so its only job here is to keep the playhead's visual
-        // position in sync with the audio thread's actual position.
-        if (isPlaying())
+        // Keep playhead / live MIDI-input piano highlights in sync with the audio thread.
+        auto needsRepaint = isPlaying();
+        if (_inputMidiNoteTracker != nullptr)
+        {
+            const auto gen = _inputMidiNoteTracker->getGeneration();
+            if (gen != _lastInputMidiGeneration)
+            {
+                _lastInputMidiGeneration = gen;
+                needsRepaint = true;
+            }
+        }
+        if (needsRepaint)
             repaint();
         return;
     }
@@ -1374,11 +1389,29 @@ void MidiEditor::paintPianoKeyboard(juce::Graphics& g) const
     const auto scalePitchClasses = getPlayheadScalePitchClasses();
     const auto chordColour = AppSettings::getInstance().getChordHighlightColour();
     const auto scaleColour = AppSettings::getInstance().getScaleHighlightColour();
+    const auto inputColour = AppSettings::getInstance().getMidiInputHighlightColour();
 
-    // Single membership → full-key wash. Two or more → keep neutral key + role dots (scale then chord).
-    const auto paintKeyBodyFill = [&](juce::Path& keyPath, juce::Rectangle<float> bounds,
-                                      bool isChord, bool isScale, bool isBlackKey)
+    const auto isLiveInput = [&](int midiNote) -> bool
     {
+        return _inputMidiNoteTracker != nullptr && _inputMidiNoteTracker->isNoteHeld(midiNote);
+    };
+
+    // Live MIDI input always full-fills the key. Theory roles: single membership → full wash;
+    // two or more theory roles → neutral key + vertical dots (unless live input already filled).
+    const auto paintKeyBodyFill = [&](juce::Path& keyPath, juce::Rectangle<float> bounds,
+                                      bool isChord, bool isScale, bool isInput, bool isBlackKey)
+    {
+        if (isInput)
+        {
+            juce::ColourGradient fill(inputColour.brighter(isBlackKey ? 0.35f : 0.28f), 0.f, bounds.getY(),
+                inputColour.darker(isBlackKey ? 0.1f : 0.18f), 0.f, bounds.getBottom(), false);
+            g.setGradientFill(fill);
+            g.fillPath(keyPath);
+            g.setColour(inputColour.withAlpha(0.45f));
+            g.strokePath(keyPath, juce::PathStrokeType(2.4f));
+            return;
+        }
+
         const auto roleCount = (isChord ? 1 : 0) + (isScale ? 1 : 0);
         if (roleCount == 1)
         {
@@ -1428,27 +1461,26 @@ void MidiEditor::paintPianoKeyboard(juce::Graphics& g) const
 
     const auto paintRoleMarkers = [&](juce::Rectangle<float> bounds, bool isChord, bool isScale, bool isBlackKey)
     {
-        // Only when 2+ roles apply (single-role uses full-key colour instead).
+        // Only when 2+ theory roles apply *and* the key is not already full-filled by live input.
         if (!(isChord && isScale))
             return;
 
-        const auto diameter = isBlackKey ? 5.5f : 6.5f;
-        const auto gap = 3.f;
-        const auto totalW = diameter * 2.f + gap;
-        const auto cy = bounds.getBottom() - (isBlackKey ? 9.f : 14.f);
-        auto x = bounds.getCentreX() - totalW * 0.5f;
+        const auto diameter = isBlackKey ? 7.5f : 9.f;
+        const auto gap = 2.5f;
+        const auto totalH = diameter * 2.f + gap;
+        const auto cx = bounds.getCentreX();
+        auto y = bounds.getBottom() - (isBlackKey ? 11.f : 18.f) - totalH;
 
         const auto drawDot = [&](juce::Colour colour)
         {
-            const auto dot = juce::Rectangle<float>(x, cy - diameter * 0.5f, diameter, diameter);
+            const auto dot = juce::Rectangle<float>(cx - diameter * 0.5f, y, diameter, diameter);
             g.setColour(colour);
             g.fillEllipse(dot);
             g.setColour(juce::Colours::white.withAlpha(isBlackKey ? 0.55f : 0.35f));
             g.drawEllipse(dot, 0.9f);
-            x += diameter + gap;
+            y += diameter + gap;
         };
 
-        // Fixed order: scale (left) then chord (right).
         drawDot(scaleColour);
         drawDot(chordColour);
     };
@@ -1466,26 +1498,30 @@ void MidiEditor::paintPianoKeyboard(juce::Graphics& g) const
             juce::jmax(1.f, whiteKeyWidth - kWhiteKeyGap), kPianoKeyboardHeight - 1.f);
         const auto isChord = chordPitchClasses[static_cast<std::size_t>(pc)];
         const auto isScale = scalePitchClasses[static_cast<std::size_t>(pc)];
-        const auto roleCount = (isChord ? 1 : 0) + (isScale ? 1 : 0);
-        const auto singleFill = roleCount == 1;
+        const auto isInput = isLiveInput(midi);
+        const auto theoryRoleCount = (isChord ? 1 : 0) + (isScale ? 1 : 0);
+        // Full wash when live input, or exactly one theory role (and no multi-dot case).
+        const auto singleFill = isInput || theoryRoleCount == 1;
+        const auto fillColour = isInput ? inputColour : (isChord ? chordColour : scaleColour);
 
         juce::Path keyPath;
         keyPath.addRoundedRectangle(bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight(),
             kWhiteKeyBottomRadius, kWhiteKeyBottomRadius, false, false, true, true);
 
-        paintKeyBodyFill(keyPath, bounds, isChord, isScale, false);
+        paintKeyBodyFill(keyPath, bounds, isChord, isScale, isInput, false);
 
         g.setColour(singleFill
-            ? (isChord ? chordColour : scaleColour).darker(0.25f).withAlpha(0.9f)
+            ? fillColour.darker(0.25f).withAlpha(0.9f)
             : juce::Colour(0xFF9A9DA3).withAlpha(0.85f));
         g.strokePath(keyPath, juce::PathStrokeType(0.8f));
 
-        paintRoleMarkers(bounds, isChord, isScale, false);
+        // Theory multi-role dots only when not covered by live-input full fill.
+        if (!isInput)
+            paintRoleMarkers(bounds, isChord, isScale, false);
 
         const auto label = kNoteNames[static_cast<std::size_t>(pc)];
         const auto labelBounds = bounds.withTrimmedTop(kPianoKeyboardHeight * 0.58f).reduced(1.f, 3.f);
         g.setFont(nui::Theme::newFont(nui::Theme::REGULAR, nui::Theme::SMALL));
-        // Multi-role keeps ivory body → normal text colour; single fill needs contrast text.
         const auto labelColour = noteTextColourForKey(false, singleFill);
         if (singleFill)
         {
@@ -1510,8 +1546,10 @@ void MidiEditor::paintPianoKeyboard(juce::Graphics& g) const
                 blackKeyWidth, blackKeyHeight);
             const auto isChord = chordPitchClasses[static_cast<std::size_t>(pc)];
             const auto isScale = scalePitchClasses[static_cast<std::size_t>(pc)];
-            const auto roleCount = (isChord ? 1 : 0) + (isScale ? 1 : 0);
-            const auto singleFill = roleCount == 1;
+            const auto isInput = isLiveInput(midi);
+            const auto theoryRoleCount = (isChord ? 1 : 0) + (isScale ? 1 : 0);
+            const auto singleFill = isInput || theoryRoleCount == 1;
+            const auto fillColour = isInput ? inputColour : (isChord ? chordColour : scaleColour);
 
             {
                 juce::Path shadow;
@@ -1527,14 +1565,15 @@ void MidiEditor::paintPianoKeyboard(juce::Graphics& g) const
             keyPath.addRoundedRectangle(bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight(),
                 kBlackKeyBottomRadius, kBlackKeyBottomRadius, false, false, true, true);
 
-            paintKeyBodyFill(keyPath, bounds, isChord, isScale, true);
+            paintKeyBodyFill(keyPath, bounds, isChord, isScale, isInput, true);
 
             g.setColour(singleFill
-                ? (isChord ? chordColour : scaleColour).darker(0.3f)
+                ? fillColour.darker(0.3f)
                 : juce::Colours::black.withAlpha(0.9f));
             g.strokePath(keyPath, juce::PathStrokeType(0.9f));
 
-            paintRoleMarkers(bounds, isChord, isScale, true);
+            if (!isInput)
+                paintRoleMarkers(bounds, isChord, isScale, true);
 
             const auto label = kNoteNames[static_cast<std::size_t>(pc)];
             const auto labelBounds = bounds.withTrimmedTop(bounds.getHeight() * 0.42f).reduced(0.5f, 2.f);

@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 
+#include "AppSettings.h"
 #include "Parameters.h"
 #include "PluginProcessor.h"
 
@@ -145,4 +146,33 @@ TEST_CASE("PluginAudioProcessor: setting the envelope-attack-ms parameter immedi
     attackParameter->setValueNotifyingHost(attackParameter->convertTo0to1(1234.0f));
 
     CHECK(processor.getSynthEngine().getSharedState().envelopeAttackMs.load() == Catch::Approx(1234.0f));
+}
+
+TEST_CASE("PluginAudioProcessor: settings mute silences processBlock audio", "[PluginProcessor]")
+{
+    const auto previousMuted = AppSettings::getInstance().getMuted();
+    AppSettings::getInstance().setMuted(false);
+
+    PluginAudioProcessor processor;
+    processor.prepareToPlay(44100.0, 512);
+
+    juce::AudioBuffer<float> buffer(2, 512);
+    juce::MidiBuffer midi;
+
+    processor.getSynthEngine().previewChord({ 60, 64, 67 });
+    buffer.clear();
+    midi.clear();
+    processor.processBlock(buffer, midi);
+    REQUIRE(buffer.getMagnitude(0, 512) > 0.0f);
+
+    AppSettings::getInstance().setMuted(true);
+    REQUIRE(AppSettings::isOutputMuted());
+
+    buffer.clear();
+    midi.clear();
+    // Keep notes sounding so silence is from mute, not release.
+    processor.processBlock(buffer, midi);
+    CHECK(buffer.getMagnitude(0, 512) == Catch::Approx(0.0f));
+
+    AppSettings::getInstance().setMuted(previousMuted);
 }

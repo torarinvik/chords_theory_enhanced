@@ -6,6 +6,7 @@
 
 #include <nierika_dsp/nierika_dsp.h>
 
+#include "Audio/InputMidiNoteTracker.h"
 #include "Audio/ProgressionPlayer.h"
 #include "Theory/Chord.h"
 #include "Theory/Key.h"
@@ -74,9 +75,11 @@ public:
     // ProgressionEditor::loadPreset) don't need to hardcode the bar length themselves.
     static constexpr double kBeatsPerBar = 4.0;
 
-    // progressionPlayer is nullable (defaults to null so existing/test-only construction with just
-    // an identifier keeps working) - every playback code path below is a safe no-op when null.
-    explicit MidiEditor(const std::string& identifier, audio::ProgressionPlayer* progressionPlayer = nullptr);
+    // progressionPlayer / inputMidiNoteTracker are nullable (defaults null so test construction
+    // with just an identifier works). Playback and live MIDI-input highlighting are no-ops when null.
+    explicit MidiEditor(const std::string& identifier,
+                        audio::ProgressionPlayer* progressionPlayer = nullptr,
+                        audio::InputMidiNoteTracker* inputMidiNoteTracker = nullptr);
     ~MidiEditor() override;
 
     void paint(juce::Graphics&) override;
@@ -207,7 +210,7 @@ private:
 
     enum class DragMode { None, MoveNote, ResizeNoteStart, ResizeNoteEnd, MoveChordBlock, ResizeLoopStart, ResizeLoopEnd, SeekPlayhead };
 
-    void timerCallback() override; // drag-triggered auto-scroll, and while playing, playhead repaint
+    void timerCallback() override; // drag auto-scroll, playhead repaint, live MIDI-input highlight
 
     // paint helpers
     void paintGridlines(juce::Graphics&) const;
@@ -310,6 +313,8 @@ private:
     bool _isHovering = false;
 
     audio::ProgressionPlayer* _progressionPlayer = nullptr;
+    audio::InputMidiNoteTracker* _inputMidiNoteTracker = nullptr;
+    std::uint32_t _lastInputMidiGeneration = 0;
     double _loopStartBeat = 0.0;
     double _loopEndBeat = kBeatsPerBar;
     bool _loopManuallyAdjusted = false;
