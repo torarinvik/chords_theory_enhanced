@@ -7,6 +7,7 @@
 
 #include "Audio/InputMidiNoteTracker.h"
 #include "Theory/Key.h"
+#include "Theory/Scale.h"
 
 namespace component
 {
@@ -25,8 +26,10 @@ public:
     void resized() override;
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
 
-    // Spelling context for enharmonics (C# vs Db) — pass the current key picker selection.
+    // Spelling + roman-numeral context from the key/scale pickers.
     void setSpellKey(theory::Key key);
+    void setScale(theory::Scale scale);
+    void setKeyAndScale(theory::Key key, theory::Scale scale);
 
     [[nodiscard]] std::string getDisplayedName() const { return _displayedName; }
 
@@ -37,11 +40,18 @@ private:
 
     audio::InputMidiNoteTracker* _tracker = nullptr;
     theory::Key _spellKey = theory::Key::C;
+    theory::Scale _scale = theory::Scale::Major;
     std::uint32_t _lastGeneration = 0;
     std::string _displayedName;
-    std::string _qualityHint; // e.g. "m9", "7b9" — shown smaller under the name when useful
+    std::string _qualityHint;
+    std::string _romanHint;
+    std::string _alternateHint;
     std::string _emptyLabel;
     bool _hasChord = false;
+    float _confidence = 0.f;
+    // Hold the previous name briefly when a low-confidence flip arrives (reduces flicker).
+    int _holdFrames = 0;
+    std::string _heldName;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LiveChordDisplay)
 };

@@ -75,7 +75,7 @@ public:
     // note).
     void setScale(theory::Scale scale);
 
-    // Spelling context for the live chord detector (C# vs Db). Key alone; scale is unused here.
+    // Spelling + roman-numeral context for the live chord detector.
     void setKey(theory::Key key);
 
     // Clears the MidiEditor and places preset.slots[i]'s resolved chord at bar i, in order - an

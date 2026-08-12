@@ -5,6 +5,11 @@
 #include <cmath>
 #include <initializer_list>
 
+#include "Theory/Chord.h"
+#include "Theory/ChordDatabase.h"
+#include "Theory/NextChordScorer.h"
+#include "Theory/NoteName.h"
+
 namespace theory
 {
 
@@ -55,10 +60,6 @@ namespace
         return pcs[static_cast<std::size_t>(mod12(root + interval))];
     }
 
-    // Chord quality template.
-    // - required: intervals that must be present (root always required unless allowMissingRoot)
-    // - optional: in-chord when present (usually 5th, sometimes 11/9 colour tones)
-    // - forbidden: if any present, reject (keeps maj vs min vs sus clean)
     struct QualityTemplate
     {
         const char* label = "";
@@ -71,7 +72,6 @@ namespace
         int specificity = 0;
         bool hasLibraryQuality = false;
         TriadQuality libraryQuality = TriadQuality::Major;
-        // Jazz "rootless" shells may omit the root when the bass supplies another chord tone.
         bool allowMissingRoot = false;
     };
 
@@ -104,18 +104,19 @@ namespace
 
     const std::vector<QualityTemplate>& catalogue()
     {
-        // forbidden 3 = b3, 4 = M3 — keep major/minor/sus families from cannibalising each other.
         static const std::vector<QualityTemplate> kCatalogue = {
-            // ---- rich extensions (#11 / dual alters) ----
+            // ---- rich extensions ----
             makeTemplate("maj13#11", { 4, 11, 9, 2, 6 }, { 7, 5 }, {}, 140),
             makeTemplate("maj13", { 4, 11, 9, 2 }, { 7, 5 }, { 3 }, 130),
             makeTemplate("m13", { 3, 10, 9, 2 }, { 7, 5 }, { 4 }, 128),
             makeTemplate("13#11", { 4, 10, 9, 2, 6 }, { 7, 5 }, {}, 126),
+            makeTemplate("13sus4", { 5, 10, 9, 2 }, { 7 }, { 3, 4 }, 125),
             makeTemplate("13", { 4, 10, 9, 2 }, { 7, 5 }, { 3 }, 124),
             makeTemplate("maj11", { 4, 11, 2, 5 }, { 7 }, { 3 }, 118),
             makeTemplate("m11", { 3, 10, 2, 5 }, { 7 }, { 4 }, 116),
             makeTemplate("11", { 4, 10, 2, 5 }, { 7 }, { 3 }, 114),
             makeTemplate("maj9#11", { 4, 11, 2, 6 }, { 7 }, {}, 112),
+            makeTemplate("9#11", { 4, 10, 2, 6 }, { 7 }, {}, 110),
             makeTemplate("maj9", { 4, 11, 2 }, { 7 }, { 3 }, 108),
             makeTemplate("m9", { 3, 10, 2 }, { 7 }, { 4 }, 106),
             makeTemplate("9", { 4, 10, 2 }, { 7 }, { 3 }, 104),
@@ -123,21 +124,25 @@ namespace
             makeTemplate("m(maj9)", { 3, 11, 2 }, { 7 }, { 4 }, 100),
 
             // ---- altered / colour dominants ----
-            makeTemplate("7alt", { 4, 10, 1, 3, 8 }, {}, {}, 98), // 7b9#9b13 (no 5)
+            makeTemplate("7alt", { 4, 10, 1, 3, 8 }, {}, {}, 98),
             makeTemplate("7#9#5", { 4, 10, 3, 8 }, {}, {}, 96),
+            makeTemplate("7#9b13", { 4, 10, 3, 8 }, { 7 }, {}, 95),
             makeTemplate("7#9", { 4, 10, 3 }, { 7 }, {}, 94),
             makeTemplate("7b9", { 4, 10, 1 }, { 7 }, {}, 92),
-            makeTemplate("7#11", { 4, 10, 6 }, { 7 }, {}, 90),
-            // 7#5 forbids natural 5 so pure #5 voicings don't get misnamed 7b13.
+            // 7#11 keeps natural 5; pure tritone-sub colour without 5 is 7b5.
+            makeTemplate("7#11", { 4, 10, 6, 7 }, {}, {}, 90),
             makeTemplate("7#5", { 4, 10, 8 }, {}, { 7 }, 88),
             makeTemplate("7b13", { 4, 10, 8 }, { 7 }, {}, 86),
+            makeTemplate("7b5", { 4, 10, 6 }, {}, { 7 }, 85),
             makeTemplate("maj7#11", { 4, 11, 6 }, { 7 }, {}, 84),
             makeTemplate("maj7#5", { 4, 8, 11 }, {}, {}, 82),
+            makeTemplate("maj7b5", { 4, 6, 11 }, {}, { 7 }, 81),
             makeTemplate("m7b9b13", { 3, 10, 1, 8 }, { 7, 5 }, { 4 }, 80),
             makeTemplate("m7b9add11", { 3, 10, 1, 5 }, { 7 }, { 4 }, 78),
             makeTemplate("m7b9", { 3, 10, 1 }, { 7 }, { 4 }, 76),
             makeTemplate("m7b13", { 3, 10, 8 }, { 7 }, { 4 }, 74),
             makeTemplate("m9#11", { 3, 10, 2, 6 }, { 7 }, { 4 }, 72),
+            makeTemplate("m7#5", { 3, 10, 8 }, {}, { 4, 7 }, 71),
 
             // ---- sevenths ----
             makeTemplate("maj7", { 4, 11 }, { 7 }, { 3, 10 }, 70, true, TriadQuality::Major7),
@@ -150,6 +155,7 @@ namespace
             makeTemplate("7sus2", { 2, 10 }, { 7 }, { 3, 4 }, 56),
             makeTemplate("maj7sus2", { 2, 11 }, { 7 }, { 3, 4 }, 54),
             makeTemplate("dim(maj7)", { 3, 6, 11 }, {}, { 4, 7 }, 52),
+            makeTemplate("7(no3)", { 10 }, { 7 }, { 3, 4 }, 51),
 
             // ---- sixths / add ----
             makeTemplate("6/9", { 4, 9, 2 }, { 7 }, { 3, 10 }, 50),
@@ -171,8 +177,7 @@ namespace
             makeTemplate("sus2", { 2, 7 }, {}, { 3, 4 }, 22, true, TriadQuality::Sus2),
             makeTemplate("5", { 7 }, {}, { 3, 4 }, 18, true, TriadQuality::Power),
 
-            // ---- shell voicings (3rd + 7th, 5th omitted) already via optional 5th above ----
-            // Rootless jazz shells: root may be absent; bass is typically 3rd/7th.
+            // ---- rootless jazz shells ----
             makeTemplate("maj7", { 4, 11 }, { 7, 2 }, { 3, 10 }, 16, true, TriadQuality::Major7, true),
             makeTemplate("7", { 4, 10 }, { 7, 2 }, { 3, 11 }, 14, true, TriadQuality::Dominant7, true),
             makeTemplate("m7", { 3, 10 }, { 7, 2 }, { 4, 11 }, 12, true, TriadQuality::Minor7, true),
@@ -206,12 +211,8 @@ namespace
     {
         auto extras = 0;
         for (int i = 0; i < 12; ++i)
-        {
-            if (!pcs[static_cast<std::size_t>(i)])
-                continue;
-            if (!isChordTone(root, tmpl, i))
+            if (pcs[static_cast<std::size_t>(i)] && !isChordTone(root, tmpl, i))
                 ++extras;
-        }
         return extras;
     }
 
@@ -233,20 +234,13 @@ namespace
         return hits;
     }
 
-    std::string formatName(int root, int bass, const QualityTemplate& tmpl, Key spellKey,
-                           bool rootWasMissing)
+    std::string formatName(int root, int bass, const QualityTemplate& tmpl, Key spellKey)
     {
         std::string name = std::string(pcName(root, spellKey)) + tmpl.label;
-        // Always show slash when bass differs, or when root was omitted (rootless shell).
-        if (mod12(bass) != mod12(root) || rootWasMissing)
+        if (mod12(bass) != mod12(root))
         {
-            // Avoid "Cmaj7/C" when rootless detection used bass C as non-root — if root missing
-            // and bass is not root, slash is essential (e.g. Em7 for Cmaj9 rootless is different).
-            if (mod12(bass) != mod12(root))
-            {
-                name += "/";
-                name += pcName(bass, spellKey);
-            }
+            name += "/";
+            name += pcName(bass, spellKey);
         }
         return name;
     }
@@ -284,6 +278,7 @@ namespace
         int coverage = 0;
         bool rootInBass = false;
         bool rootMissing = false;
+        std::string name;
     };
 
     bool betterCandidate(const Candidate& a, const Candidate& b)
@@ -296,10 +291,9 @@ namespace
             return a.requiredMatched > b.requiredMatched;
         if (a.extras != b.extras)
             return a.extras < b.extras;
-        // Prefer non-rootless when tied.
         if (a.rootMissing != b.rootMissing)
             return !a.rootMissing && b.rootMissing;
-        return false;
+        return a.name < b.name;
     }
 
     void consider(std::optional<Candidate>& slot, const Candidate& cand)
@@ -312,7 +306,8 @@ namespace
                                           int root,
                                           int bassPitchClass,
                                           int nHeld,
-                                          bool requireRootHeld)
+                                          bool requireRootHeld,
+                                          Key spellKey)
     {
         std::optional<Candidate> best;
         const bool rootHeld = pcs[static_cast<std::size_t>(mod12(root))];
@@ -322,11 +317,11 @@ namespace
             if (requireRootHeld && !rootHeld)
                 continue;
             if (!requireRootHeld && rootHeld)
-                continue; // rootless pass only
+                continue;
             if (!requireRootHeld && !tmpl.allowMissingRoot)
                 continue;
             if (!requireRootHeld && nHeld < 3)
-                continue; // rootless needs enough colour tones
+                continue;
 
             if (hasForbidden(pcs, root, tmpl))
                 continue;
@@ -343,17 +338,12 @@ namespace
             if (!allRequired)
                 continue;
 
-            // Rootless: still need the sounding set to look like that chord (coverage).
             const int requiredMatched = tmpl.requiredCount + (rootHeld ? 1 : 0);
             const int extras = extraToneCount(pcs, root, tmpl);
             if (extras > 2)
                 continue;
 
             const int coverage = chordToneHits(pcs, root, tmpl);
-            // Must explain most of what is held.
-            if (coverage + extras != nHeld) // should always hold; defensive
-            {
-            }
             if (nHeld >= 3 && coverage < nHeld - 1 && extras > 0)
                 continue;
 
@@ -361,7 +351,6 @@ namespace
             const bool bassInChord = isChordTone(root, tmpl, bassPitchClass);
             const bool rootInBass = mod12(bassPitchClass) == mod12(root);
 
-            // Rootless shells with no bass relationship are weak guesses — skip.
             if (!rootHeld && !bassInChord)
                 continue;
 
@@ -375,22 +364,107 @@ namespace
             if (bassInChord)
                 score += 8;
             if (rootHeld)
-                score += 12; // prefer hearing the root
+                score += 12;
             else
-                score -= 18; // rootless penalty (still useful when nothing better)
+                score -= 18;
 
-            // Completeness: fraction of held notes explained.
             score += static_cast<int>(std::lround(40.0 * coverage / std::max(1, nHeld)));
 
-            consider(best, Candidate {
-                root, &tmpl, score, requiredMatched, extras, coverage, rootInBass, !rootHeld
-            });
+            Candidate cand {
+                root, &tmpl, score, requiredMatched, extras, coverage, rootInBass, !rootHeld,
+                formatName(root, bassPitchClass, tmpl, spellKey)
+            };
+            consider(best, cand);
         }
         return best;
     }
+
+    Chord buildChordForRoman(const Candidate& cand, Key spellKey, int bassPitchClass)
+    {
+        if (cand.tmpl != nullptr && cand.tmpl->hasLibraryQuality)
+        {
+            int inv = 0;
+            if (mod12(bassPitchClass) != mod12(cand.root))
+            {
+                const auto intervals = TriadLibrary::qualityIntervals(cand.tmpl->libraryQuality);
+                for (std::size_t i = 0; i < intervals.size(); ++i)
+                {
+                    if (mod12(cand.root + intervals[i]) == mod12(bassPitchClass))
+                    {
+                        inv = static_cast<int>(i) + 1;
+                        break;
+                    }
+                }
+                if (inv == 0)
+                    inv = 1;
+            }
+            return TriadLibrary::makeTriad(cand.root, cand.tmpl->libraryQuality, spellKey, inv);
+        }
+
+        // Synthetic chord: bass-first notes with root tagged positionInChord=1.
+        Chord chord;
+        chord.readableName = cand.name;
+        chord.symbol = cand.name;
+        auto push = [&](int pc, int role)
+        {
+            const char* n = pcName(pc, spellKey);
+            chord.notes.push_back(NoteName { n, n, role });
+        };
+
+        // Bass first if different from root.
+        if (mod12(bassPitchClass) != mod12(cand.root))
+            push(bassPitchClass, 5);
+        push(cand.root, 1);
+        if (cand.tmpl != nullptr)
+        {
+            for (int i = 0; i < cand.tmpl->requiredCount; ++i)
+            {
+                const int pc = mod12(cand.root + cand.tmpl->required[i]);
+                if (pc == mod12(bassPitchClass) || pc == mod12(cand.root))
+                    continue;
+                const int iv = cand.tmpl->required[i];
+                int role = 3;
+                if (iv == 7 || iv == 6 || iv == 8)
+                    role = 5;
+                else if (iv == 10 || iv == 11 || iv == 9)
+                    role = 7;
+                else if (iv == 2 || iv == 1)
+                    role = 9;
+                else if (iv == 5)
+                    role = 4;
+                push(pc, role);
+            }
+        }
+        return chord;
+    }
+
+    void fillRoman(ChordDetection& result, const Candidate& cand, Key spellKey,
+                   std::optional<Scale> scale, int bassPitchClass)
+    {
+        if (!scale.has_value())
+            return;
+
+        const auto& keyScale = ChordDatabase::getInstance().get(spellKey, *scale);
+        const Chord chord = buildChordForRoman(cand, spellKey, bassPitchClass);
+        result.romanNumeral = NextChordScorer::romanForChord(chord, keyScale);
+    }
+
+    float confidenceFromScores(int bestScore, int secondScore, int nHeld)
+    {
+        if (nHeld <= 0)
+            return 0.f;
+        if (secondScore <= 0)
+            return std::clamp(0.55f + static_cast<float>(nHeld) * 0.06f, 0.55f, 0.98f);
+
+        const float margin = static_cast<float>(bestScore - secondScore);
+        // Soft map: small margin → ~0.45, large margin → ~0.95
+        const float c = 0.45f + 0.5f * (1.f - std::exp(-margin / 55.f));
+        return std::clamp(c, 0.2f, 0.99f);
+    }
 }
 
-ChordDetection ChordDetector::detect(const std::array<bool, 12>& pcs, int bassPitchClass, Key spellKey)
+ChordDetection ChordDetector::detect(const std::array<bool, 12>& pcs, int bassPitchClass, Key spellKey,
+                                     std::optional<Scale> scale)
 {
     ChordDetection result;
     const auto nHeld = heldCount(pcs);
@@ -412,6 +486,7 @@ ChordDetection ChordDetector::detect(const std::array<bool, 12>& pcs, int bassPi
         result.bassPitchClass = only;
         result.toneCount = 1;
         result.qualityLabel = "note";
+        result.confidence = 0.9f;
         return result;
     }
 
@@ -419,15 +494,32 @@ ChordDetection ChordDetector::detect(const std::array<bool, 12>& pcs, int bassPi
     std::optional<Candidate> bestSlash;
     std::optional<Candidate> bestOther;
     std::optional<Candidate> bestRootless;
+    // Track global runner-up across buckets for alternateName / confidence.
+    std::optional<Candidate> globalBest;
+    std::optional<Candidate> globalSecond;
 
-    // Pass A: root is held.
+    const auto trackGlobal = [&](const Candidate& cand)
+    {
+        if (!globalBest.has_value() || betterCandidate(cand, *globalBest))
+        {
+            globalSecond = globalBest;
+            globalBest = cand;
+        }
+        else if ((!globalSecond.has_value() || betterCandidate(cand, *globalSecond))
+                 && cand.name != globalBest->name)
+        {
+            globalSecond = cand;
+        }
+    };
+
     for (int root = 0; root < 12; ++root)
     {
         if (!pcs[static_cast<std::size_t>(root)])
             continue;
 
-        if (auto cand = evaluateRoot(pcs, root, bassPitchClass, nHeld, true))
+        if (auto cand = evaluateRoot(pcs, root, bassPitchClass, nHeld, true, spellKey))
         {
+            trackGlobal(*cand);
             if (cand->rootInBass)
                 consider(bestRootPosition, *cand);
             else if (isChordTone(root, *cand->tmpl, bassPitchClass))
@@ -437,18 +529,18 @@ ChordDetection ChordDetector::detect(const std::array<bool, 12>& pcs, int bassPi
         }
     }
 
-    // Pass B: rootless voicings (root not held) — only if pass A is thin.
-    const bool thinRooted = !bestRootPosition.has_value()
-        && !bestSlash.has_value()
-        && nHeld >= 3;
+    const bool thinRooted = !bestRootPosition.has_value() && !bestSlash.has_value() && nHeld >= 3;
     if (thinRooted || (bestRootPosition.has_value() && bestRootPosition->extras > 0 && nHeld >= 4))
     {
         for (int root = 0; root < 12; ++root)
         {
             if (pcs[static_cast<std::size_t>(root)])
-                continue; // only missing roots
-            if (auto cand = evaluateRoot(pcs, root, bassPitchClass, nHeld, false))
+                continue;
+            if (auto cand = evaluateRoot(pcs, root, bassPitchClass, nHeld, false, spellKey))
+            {
+                trackGlobal(*cand);
                 consider(bestRootless, *cand);
+            }
         }
     }
 
@@ -471,7 +563,6 @@ ChordDetection ChordDetector::detect(const std::array<bool, 12>& pcs, int bassPi
         best = bestOther;
     }
 
-    // Adopt rootless only when clearly better / only option.
     if (bestRootless.has_value())
     {
         if (!best.has_value() || bestRootless->score > best->score + 25)
@@ -502,6 +593,7 @@ ChordDetection ChordDetector::detect(const std::array<bool, 12>& pcs, int bassPi
                 result.bassPitchClass = bassPitchClass;
                 result.toneCount = 2;
                 result.qualityLabel = "dyad";
+                result.confidence = 0.55f;
                 return result;
             }
         }
@@ -521,12 +613,13 @@ ChordDetection ChordDetector::detect(const std::array<bool, 12>& pcs, int bassPi
         result.bassPitchClass = bassPitchClass;
         result.toneCount = nHeld;
         result.qualityLabel = "cluster";
+        result.confidence = 0.25f;
         return result;
     }
 
     const auto& tmpl = *best->tmpl;
     result.matched = true;
-    result.name = formatName(best->root, bassPitchClass, tmpl, spellKey, best->rootMissing);
+    result.name = best->name;
     result.rootPitchClass = best->root;
     result.bassPitchClass = bassPitchClass;
     result.toneCount = best->requiredMatched;
@@ -534,10 +627,24 @@ ChordDetection ChordDetector::detect(const std::array<bool, 12>& pcs, int bassPi
     result.hasLibraryQuality = tmpl.hasLibraryQuality;
     if (tmpl.hasLibraryQuality)
         result.quality = tmpl.libraryQuality;
+
+    // Alternate: best differently-named candidate (often the enharmonic/inversion twin).
+    if (globalSecond.has_value() && globalSecond->name != result.name)
+        result.alternateName = globalSecond->name;
+    else if (bestRootPosition.has_value() && bestSlash.has_value()
+             && best->name == bestRootPosition->name
+             && bestSlash->name != result.name)
+        result.alternateName = bestSlash->name;
+
+    const int secondScore = globalSecond.has_value() ? globalSecond->score : 0;
+    result.confidence = confidenceFromScores(best->score, secondScore, nHeld);
+
+    fillRoman(result, *best, spellKey, scale, bassPitchClass);
     return result;
 }
 
-ChordDetection ChordDetector::detectFromMidiNotes(const std::vector<int>& midiNotes, Key spellKey)
+ChordDetection ChordDetector::detectFromMidiNotes(const std::vector<int>& midiNotes, Key spellKey,
+                                                  std::optional<Scale> scale)
 {
     if (midiNotes.empty())
         return {};
@@ -558,7 +665,7 @@ ChordDetection ChordDetector::detectFromMidiNotes(const std::vector<int>& midiNo
     if (!any || heldCount(pcs) == 0)
         return {};
 
-    return detect(pcs, mod12(lowestMidi), spellKey);
+    return detect(pcs, mod12(lowestMidi), spellKey, scale);
 }
 
 }

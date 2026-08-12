@@ -123,6 +123,7 @@ void ProgressionEditor::setScale(theory::Scale scale)
 {
     _currentScale = scale;
     _presetPicker.refreshForScale(scale);
+    _liveChordDisplay.setScale(scale);
 }
 
 void ProgressionEditor::setKey(theory::Key key)

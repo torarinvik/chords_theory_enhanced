@@ -313,3 +313,55 @@ TEST_CASE("ChordDetector: dim(maj7)", "[ChordDetector]")
     CHECK(d.name == "Cdim(maj7)");
 }
 
+TEST_CASE("ChordDetector: 7b5 and 9#11", "[ChordDetector]")
+{
+    // C7b5 = C E Gb Bb
+    auto d = ChordDetector::detectFromMidiNotes(midiPcs({ 0, 4, 6, 10 }), Key::C);
+    REQUIRE(d.matched);
+    CHECK(d.name == "C7b5");
+
+    // G9#11 = G B D F A C#
+    d = ChordDetector::detectFromMidiNotes(midiPcs({ 7, 11, 2, 5, 9, 1 }), Key::C);
+    REQUIRE(d.matched);
+    CHECK(d.name == "G9#11");
+}
+
+TEST_CASE("ChordDetector: confidence and alternate for C6/Am7 twins", "[ChordDetector]")
+{
+    // C E G A with C bass → C6; Am7 is a common alternate reading.
+    const auto d = ChordDetector::detectFromMidiNotes(midiPcs({ 0, 4, 7, 9 }), Key::C);
+    REQUIRE(d.matched);
+    CHECK(d.name == "C6");
+    CHECK(d.confidence > 0.4f);
+    // Alternate may be Am7/C or similar twin.
+    if (!d.alternateName.empty())
+        CHECK(d.alternateName != d.name);
+}
+
+TEST_CASE("ChordDetector: roman numeral in C major", "[ChordDetector]")
+{
+    using theory::Scale;
+    // G7 in C major → V
+    const auto g7 = ChordDetector::detectFromMidiNotes(
+        midiPcs({ 7, 11, 2, 5 }), Key::C, Scale::Major);
+    REQUIRE(g7.matched);
+    CHECK(g7.name == "G7");
+    CHECK(g7.romanNumeral == "V");
+
+    // Am in C major → vi
+    const auto am = ChordDetector::detectFromMidiNotes(
+        midiPcs({ 9, 0, 4 }), Key::C, Scale::Major);
+    REQUIRE(am.matched);
+    CHECK(am.name == "Am");
+    CHECK(am.romanNumeral == "vi");
+}
+
+TEST_CASE("ChordDetector: 13sus4", "[ChordDetector]")
+{
+    // G13sus4 = G C D F A E (no 3)
+    const auto d = ChordDetector::detectFromMidiNotes(midiPcs({ 7, 0, 2, 5, 9, 4 }), Key::C);
+    REQUIRE(d.matched);
+    CHECK(d.name == "G13sus4");
+}
+
+
