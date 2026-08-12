@@ -181,6 +181,11 @@ void PluginAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     _synthEngine.renderNextBlock(buffer, midiMessages, 0, buffer.getNumSamples(), getPlayHead());
     // Host-routable MIDI out last so DAWs receive note events for other tracks.
     _hostMidiEmitter.renderNextBlock(midiMessages, buffer.getNumSamples());
+
+    // Settings mute: silence audio only. MIDI out and input tracking keep running so the
+    // piano can still light up and host routing still works while muted.
+    if (AppSettings::isOutputMuted())
+        buffer.clear();
 }
 
 //==============================================================================

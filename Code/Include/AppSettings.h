@@ -39,6 +39,14 @@ public:
     [[nodiscard]] juce::Colour getMidiInputHighlightColour() const;
     void setMidiInputHighlightColour(juce::Colour colour);
 
+    // When true, the plugin's audio output is silenced (MIDI out / piano highlight still run).
+    // Default is unmuted. Safe for the audio thread via isOutputMuted().
+    [[nodiscard]] bool getMuted() const;
+    void setMuted(bool muted);
+
+    // Audio-thread-safe mute flag, kept in sync with getInstance()'s getMuted().
+    [[nodiscard]] static bool isOutputMuted() noexcept;
+
     // Fired after any setter that should refresh UI (theme is also announced via nui::Theme).
     static juce::ChangeBroadcaster& getChangeBroadcaster();
 

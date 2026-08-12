@@ -2,6 +2,7 @@
 
 #include <nierika_dsp/nierika_dsp.h>
 
+#include "Component/AudioSettings.h"
 #include "Component/LanguageSettings.h"
 #include "Component/VisualSettings.h"
 
@@ -36,6 +37,7 @@ private:
     nelement::SVGButton _closeButton { "settings-close-button", nui::Icons::getCross() };
 
     VisualSettings _visualSettings { "settings-visual" };
+    AudioSettings _audioSettings { "settings-audio" };
     LanguageSettings _languageSettings { "settings-language" };
 
     nlayout::GridLayout<nui::Component> _layout { *this };
