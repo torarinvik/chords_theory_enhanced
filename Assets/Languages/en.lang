@@ -31,6 +31,7 @@ countries: us gb au ca nz ie
 "progression_save_preset_confirm" = "Save"
 "progression_save_preset_placeholder" = "Preset name"
 "progression_presets_label" = "Progression presets"
+"live_chord_display_empty" = "Play a chord…"
 "progression_clear_tooltip" = "Clear all chords from the sequence"
 "progression_bpm_label" = "BPM"
 "progression_bpm_tooltip" = "Tempo for progression playback"

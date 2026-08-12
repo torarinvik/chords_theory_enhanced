@@ -2,6 +2,7 @@ add_executable(${PROJECT_NAME}_Tests
         AppSettingsTests.cpp
         PluginProcessorTests.cpp
         ChordDatabaseTests.cpp
+        ChordDetectorTests.cpp
         NoteConvertorTests.cpp
         ProgressionPresetTests.cpp
         MidiExporterTests.cpp

@@ -23,6 +23,7 @@ ProgressionEditor::ProgressionEditor(const std::string& identifier,
     _presetPicker("progression-preset-picker-wrapper"),
     _savePresetButton("progression-save-preset-button", nui::Icons::getPlus()),
     _dragHandle("progression-drag-handle"),
+    _liveChordDisplay("progression-live-chord", inputMidiNoteTracker),
     _midiEditor("progression-midi-editor", progressionPlayer, inputMidiNoteTracker)
 {
     _presetPicker.addListener(this);
@@ -64,7 +65,7 @@ ProgressionEditor::ProgressionEditor(const std::string& identifier,
     _layout.setGap(8.f);
     _layout.setDisplayGrid(false);
 
-    // play | clear | gap | bpm label | bpm | gap | drag | flex | presets label | picker | save
+    // play | clear | gap | bpm label | bpm | gap | drag | live chord | presets label | picker | save
     _layout.init({ 1, 1, 1 }, { 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1 });
 
     _layout.setFixedColumnWidth(0, 32.f);
@@ -74,6 +75,7 @@ ProgressionEditor::ProgressionEditor(const std::string& identifier,
     _layout.setFixedColumnWidth(4, 96.f);
     _layout.setFixedColumnWidth(5, 8.f);
     _layout.setFixedColumnWidth(6, 150.f);
+    // Column 7 is flexible: live chord readout.
     _layout.setFixedColumnWidth(8, 160.f);
     _layout.setFixedColumnWidth(9, 220.f);
     _layout.setFixedColumnWidth(10, 32.f);
@@ -86,6 +88,7 @@ ProgressionEditor::ProgressionEditor(const std::string& identifier,
     _layout.addComponent(_bpmLabel, 0, 3, 1, 1);
     _layout.addComponent("progression-bpm-slider", _bpmSlider, 0, 4, 1, 1);
     _layout.addComponent(_dragHandle, 0, 6, 1, 1);
+    _layout.addComponent(_liveChordDisplay, 0, 7, 1, 1);
     _layout.addComponent(_presetsLabel, 0, 8, 1, 1);
     _layout.addComponent(_presetPicker, 0, 9, 1, 1);
     _layout.addComponent(_savePresetButton, 0, 10, 1, 1);
@@ -120,6 +123,11 @@ void ProgressionEditor::setScale(theory::Scale scale)
 {
     _currentScale = scale;
     _presetPicker.refreshForScale(scale);
+}
+
+void ProgressionEditor::setKey(theory::Key key)
+{
+    _liveChordDisplay.setSpellKey(key);
 }
 
 void ProgressionEditor::loadPreset(const theory::ProgressionPreset& preset)
