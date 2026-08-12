@@ -39,6 +39,7 @@ private:
     theory::Key _spellKey = theory::Key::C;
     std::uint32_t _lastGeneration = 0;
     std::string _displayedName;
+    std::string _qualityHint; // e.g. "m9", "7b9" — shown smaller under the name when useful
     std::string _emptyLabel;
     bool _hasChord = false;
 

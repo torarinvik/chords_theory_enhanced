@@ -15,15 +15,19 @@ namespace theory
 struct ChordDetection
 {
     bool matched = false;
-    std::string name; // e.g. "Am7", "C/E", "G5", or a single note "F#"
+    std::string name; // e.g. "Am9", "C/E", "G7b9", single note "F#"
     int rootPitchClass = 0;
     int bassPitchClass = 0;
+    // Set when the match is one of TriadLibrary's core qualities; otherwise Major as placeholder.
     TriadQuality quality = TriadQuality::Major;
-    int toneCount = 0; // size of the matched quality (incl. root)
+    bool hasLibraryQuality = false;
+    std::string qualityLabel; // e.g. "m9", "maj7", "7sus4", "dim7"
+    int toneCount = 0; // required tones matched (excl. optional omissions)
 };
 
-// Stateless detector: maps live MIDI pitch classes → a readable chord name using the same
-// quality catalogue as TriadLibrary (triads, sus, power, common sevenths + inversions).
+// Stateless detector: maps live MIDI pitch classes → a readable chord name.
+// Catalogue covers triads through 13ths, alters (#9/b9/#11/b13/alt), sixths, add tones,
+// sus variants, dim7, and rootless jazz shells. Forbidden-interval rules keep maj/min/sus distinct.
 class ChordDetector
 {
 public:

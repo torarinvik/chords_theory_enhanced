@@ -67,12 +67,23 @@ void LiveChordDisplay::refreshFromTracker(bool force)
 
     const auto nextName = detection.matched ? detection.name : std::string {};
     const auto nextHas = detection.matched && !nextName.empty();
+    // Hint only when the symbol is non-trivial (skip plain major triad "").
+    std::string nextHint;
+    if (nextHas && !detection.qualityLabel.empty()
+        && detection.qualityLabel != "note"
+        && detection.qualityLabel != "dyad"
+        && detection.qualityLabel != "cluster"
+        && detection.qualityLabel != "maj")
+    {
+        nextHint = detection.qualityLabel;
+    }
 
-    if (nextHas == _hasChord && nextName == _displayedName)
+    if (nextHas == _hasChord && nextName == _displayedName && nextHint == _qualityHint)
         return;
 
     _hasChord = nextHas;
     _displayedName = nextName;
+    _qualityHint = std::move(nextHint);
     repaint();
 }
 
@@ -96,11 +107,27 @@ void LiveChordDisplay::paint(juce::Graphics& g)
         g.drawRoundedRectangle(bounds, 6.f, 1.f);
     }
 
-    g.setFont(nui::Theme::newFont(nui::Theme::BOLD, showChord ? nui::Theme::HEADING : nui::Theme::SMALL));
-    g.setColour(showChord
-        ? nui::Theme::newColor(nui::Theme::ThemeColor::TEXT).asJuce()
-        : nui::Theme::newColor(nui::Theme::ThemeColor::DISABLED).asJuce());
-    g.drawText(text, bounds.reduced(8.f, 0.f), juce::Justification::centred, true);
+    if (showChord && !_qualityHint.empty() && bounds.getHeight() >= 28.f)
+    {
+        auto nameArea = bounds;
+        auto hintArea = nameArea.removeFromRight(juce::jmin(72.f, bounds.getWidth() * 0.35f));
+        g.setFont(nui::Theme::newFont(nui::Theme::BOLD, nui::Theme::HEADING));
+        g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::TEXT).asJuce());
+        g.drawText(text, nameArea.reduced(8.f, 0.f), juce::Justification::centred, true);
+
+        g.setFont(nui::Theme::newFont(nui::Theme::REGULAR, nui::Theme::SMALL));
+        g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::ACCENT).asJuce().withAlpha(0.9f));
+        g.drawText(juce::String(_qualityHint), hintArea.reduced(4.f, 0.f),
+            juce::Justification::centredRight, true);
+    }
+    else
+    {
+        g.setFont(nui::Theme::newFont(nui::Theme::BOLD, showChord ? nui::Theme::HEADING : nui::Theme::SMALL));
+        g.setColour(showChord
+            ? nui::Theme::newColor(nui::Theme::ThemeColor::TEXT).asJuce()
+            : nui::Theme::newColor(nui::Theme::ThemeColor::DISABLED).asJuce());
+        g.drawText(text, bounds.reduced(8.f, 0.f), juce::Justification::centred, true);
+    }
 }
 
 void LiveChordDisplay::resized()
