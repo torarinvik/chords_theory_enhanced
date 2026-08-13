@@ -6,12 +6,15 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <set>
 
 #include "AppSettings.h"
 #include "Theory/ChordDatabase.h"
+#include "Theory/ChordDetector.h"
 #include "Theory/Key.h"
 #include "Theory/NoteConvertor.h"
 #include "Theory/Scale.h"
+#include "Theory/TriadLibrary.h"
 
 namespace component
 {
@@ -114,6 +117,7 @@ MidiEditor::~MidiEditor()
     // Playback lives on ChordSynthEngine (owned by the audio processor, outliving this editor
     // Component) - without this, closing the editor while a progression is playing would leave it
     // looping forever with no way left to stop it.
+    _isRecording = false;
     if (_progressionPlayer != nullptr)
         _progressionPlayer->stop();
 
@@ -253,6 +257,7 @@ void MidiEditor::addChordAtBeat(double startBeat, const theory::Chord& chord, co
 
 void MidiEditor::clear()
 {
+    stopRecording();
     stopPlayback();
 
     _notes.clear();
@@ -375,6 +380,7 @@ theory::MidiEditorState MidiEditor::getState() const
 
 void MidiEditor::restoreState(const theory::MidiEditorState& state)
 {
+    stopRecording();
     stopPlayback();
     _loopManuallyAdjusted = false;
     _selectedChordIndex = -1;
@@ -416,7 +422,11 @@ void MidiEditor::restoreState(const theory::MidiEditorState& state)
 
 void MidiEditor::startPlayback()
 {
-    if (_progressionPlayer == nullptr || _notes.empty() || _progressionPlayer->isPlaying())
+    if (_progressionPlayer == nullptr || _progressionPlayer->isPlaying())
+        return;
+
+    // Empty content is allowed so record can advance the playhead with no notes yet.
+    if (_notes.empty() && !_isRecording)
         return;
 
     std::vector<audio::ScheduledNote> scheduledNotes;
@@ -437,6 +447,22 @@ void MidiEditor::startPlayback()
         listener->onPlaybackStateChanged(true);
 }
 
+void MidiEditor::pausePlayback()
+{
+    if (!isPlaying())
+        return;
+
+    // Cut any open record notes at the pause point before freezing the playhead.
+    if (_isRecording)
+    {
+        finalizeOpenRecordNotes();
+        // Keep record armed; only flush session/UI once so pause stays cheap.
+        flushRecordingContentChanged();
+    }
+
+    stopPlayback();
+}
+
 void MidiEditor::stopPlayback()
 {
     if (_progressionPlayer == nullptr || !_progressionPlayer->isPlaying())
@@ -444,13 +470,341 @@ void MidiEditor::stopPlayback()
 
     _progressionPlayer->stop();
 
-    if (_dragMode == DragMode::None && _inputMidiNoteTracker == nullptr)
+    if (_dragMode == DragMode::None && _inputMidiNoteTracker == nullptr && !_isRecording)
         stopTimer();
 
     repaint();
 
     for (auto* listener : _listeners)
         listener->onPlaybackStateChanged(false);
+}
+
+void MidiEditor::notifyRecordingStateChanged()
+{
+    for (auto* listener : _listeners)
+        listener->onRecordingStateChanged(_isRecording);
+}
+
+void MidiEditor::flushRecordingContentChanged()
+{
+    if (!_recordDirty)
+        return;
+    _recordDirty = false;
+    notifyContentChanged();
+}
+
+void MidiEditor::startRecording()
+{
+    if (_isRecording)
+        return;
+
+    if (_inputMidiNoteTracker == nullptr || _progressionPlayer == nullptr)
+        return;
+
+    _isRecording = true;
+    _recordDirty = false;
+    _recordNoteOnBeats.clear();
+    _recordSliceNoteIndices.clear();
+    _recordPreviouslyHeld.fill(false);
+    _lastRecordCaptureGeneration = _inputMidiNoteTracker->getGeneration();
+
+    // Seed held state so notes already down before arm don't fire a false note-on edge.
+    for (const int n : _inputMidiNoteTracker->getHeldNotes())
+    {
+        if (n >= 0 && n < 128)
+            _recordPreviouslyHeld[static_cast<std::size_t>(n)] = true;
+    }
+
+    // One large runway so the playhead does not wrap mid-take (avoids per-tick loop growth).
+    constexpr double kRecordRunwayBars = 64.0;
+    const auto playhead = getUiPlayheadBeat();
+    const auto runwayEnd = snapBeatToBar(playhead) + kBeatsPerBar * kRecordRunwayBars;
+    if (runwayEnd > _loopEndBeat)
+    {
+        _loopEndBeat = runwayEnd;
+        _progressionPlayer->setLoopBounds(_loopStartBeat, _loopEndBeat);
+        refreshScrollRanges();
+    }
+
+    if (!isPlaying())
+        startPlayback();
+
+    if (!isTimerRunning())
+        startTimerHz(45);
+
+    notifyRecordingStateChanged();
+    repaint();
+}
+
+void MidiEditor::stopRecording()
+{
+    if (!_isRecording)
+        return;
+
+    finalizeOpenRecordNotes();
+    _isRecording = false;
+    _recordNoteOnBeats.clear();
+    _recordSliceNoteIndices.clear();
+    _recordPreviouslyHeld.fill(false);
+
+    // Single session/UI refresh after the take — never once-per-note mid-record.
+    flushRecordingContentChanged();
+
+    if (_dragMode == DragMode::None && !isPlaying() && _inputMidiNoteTracker == nullptr)
+        stopTimer();
+
+    notifyRecordingStateChanged();
+    repaint();
+}
+
+void MidiEditor::ensureRecordingLoopCoversPlayhead()
+{
+    if (_progressionPlayer == nullptr)
+        return;
+
+    const auto playhead = getUiPlayheadBeat();
+    // Grow in large chunks only when the playhead approaches the loop end.
+    constexpr double kRunwayBars = 32.0;
+    constexpr double kGrowWhenWithinBars = 8.0;
+    if (playhead + kBeatsPerBar * kGrowWhenWithinBars < _loopEndBeat)
+        return;
+
+    _loopEndBeat = snapBeatToBar(playhead) + kBeatsPerBar * kRunwayBars;
+    _progressionPlayer->setLoopBounds(_loopStartBeat, _loopEndBeat);
+    refreshScrollRanges();
+}
+
+void MidiEditor::finalizeOpenRecordNotes()
+{
+    if (_recordNoteOnBeats.empty())
+    {
+        commitRecordedSliceIfChord();
+        return;
+    }
+
+    const auto endBeat = getUiPlayheadBeat();
+    for (const auto& [midiNote, startBeat] : _recordNoteOnBeats)
+    {
+        const auto length = juce::jmax(0.25, endBeat - startBeat);
+        _notes.push_back({ midiNote, startBeat, length, -1 });
+        _recordSliceNoteIndices.push_back(static_cast<int>(_notes.size()) - 1);
+        _recordDirty = true;
+    }
+    _recordNoteOnBeats.clear();
+    commitRecordedSliceIfChord();
+}
+
+void MidiEditor::commitRecordedSliceIfChord()
+{
+    if (_recordSliceNoteIndices.size() < 2)
+    {
+        _recordSliceNoteIndices.clear();
+        return;
+    }
+
+    // Compact indices (notes may have been reordered only by push_back — indices still valid).
+    std::vector<int> validIndices;
+    validIndices.reserve(_recordSliceNoteIndices.size());
+    std::vector<int> midiNotes;
+    double minStart = std::numeric_limits<double>::max();
+    double maxEnd = 0.0;
+    std::set<int> pitchClasses;
+
+    for (const int idx : _recordSliceNoteIndices)
+    {
+        if (idx < 0 || idx >= static_cast<int>(_notes.size()))
+            continue;
+        const auto& note = _notes[static_cast<std::size_t>(idx)];
+        validIndices.push_back(idx);
+        midiNotes.push_back(note.midiNote);
+        minStart = juce::jmin(minStart, note.startBeat);
+        maxEnd = juce::jmax(maxEnd, note.startBeat + note.lengthBeats);
+        pitchClasses.insert(((note.midiNote % 12) + 12) % 12);
+    }
+
+    _recordSliceNoteIndices.clear();
+
+    if (validIndices.size() < 2 || pitchClasses.size() < 2)
+        return;
+
+    const auto detection = theory::ChordDetector::detectFromMidiNotes(
+        midiNotes, _analysisKey, _analysisScale);
+
+    theory::Chord frozen;
+    if (detection.matched && detection.hasLibraryQuality)
+    {
+        const int root = detection.rootPitchClass;
+        const int bass = detection.bassPitchClass;
+        int inversion = 0;
+        const int rel = ((bass - root) % 12 + 12) % 12;
+        if (rel == 3 || rel == 4)
+            inversion = 1;
+        else if (rel == 6 || rel == 7 || rel == 8)
+            inversion = 2;
+        frozen = theory::TriadLibrary::makeTriad(root, detection.quality, _analysisKey, inversion);
+        if (!detection.name.empty())
+        {
+            frozen.readableName = detection.name;
+            frozen.symbol = detection.name;
+        }
+    }
+    else
+    {
+        // Build bass-first note list from the recorded MIDI (lowest first).
+        std::vector<int> sorted = midiNotes;
+        std::sort(sorted.begin(), sorted.end());
+        frozen.readableName = detection.matched && !detection.name.empty() ? detection.name : "Chord";
+        frozen.symbol = frozen.readableName;
+        frozen.popularityOrder = 1;
+        int role = 1;
+        std::array<bool, 12> seen {};
+        seen.fill(false);
+        for (const int midi : sorted)
+        {
+            const int pc = ((midi % 12) + 12) % 12;
+            if (seen[static_cast<std::size_t>(pc)])
+                continue;
+            seen[static_cast<std::size_t>(pc)] = true;
+            static constexpr const char* kNames[12] = {
+                "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
+            };
+            const int pos = (pc == detection.rootPitchClass) ? 1 : role;
+            frozen.notes.push_back(theory::NoteName { kNames[pc], kNames[pc], pos });
+            if (role == 1)
+                role = 3;
+            else if (role == 3)
+                role = 5;
+            else
+                role = role + 1;
+        }
+    }
+
+    // Place the chip on the actual gesture span (not forced to a full bar from the bar line).
+    // Full-bar placement stacked every multi-note take in the same bar on top of each other.
+    const auto chipStart = snapBeat(minStart);
+    const auto chipEnd = juce::jmax(chipStart + kSnapBeats, maxEnd);
+    auto length = chipEnd - chipStart;
+
+    // Resolve overlaps with existing chips so labels/borders never paint on top of each other.
+    // Earlier chips that spill into this range are trimmed (notes clipped); later chips that sit
+    // under this gesture are removed (notes keep sounding, just unlinked from a chord block).
+    for (int i = static_cast<int>(_chordBlocks.size()) - 1; i >= 0; --i)
+    {
+        auto& other = _chordBlocks[static_cast<std::size_t>(i)];
+        const auto otherStart = other.startBeat;
+        const auto otherEnd = otherStart + effectiveChordBlockLength(other);
+        if (otherEnd <= chipStart || otherStart >= chipStart + length)
+            continue;
+
+        if (otherStart < chipStart)
+        {
+            // Keep the earlier chip; end it where this gesture begins.
+            other.lengthBeats = juce::jmax(kSnapBeats, chipStart - otherStart);
+            // Clip linked notes so effective length follows the trim (note-span drives paint).
+            for (auto& note : _notes)
+            {
+                if (note.sourceChordId != other.id)
+                    continue;
+                const auto noteEnd = note.startBeat + note.lengthBeats;
+                if (note.startBeat >= chipStart)
+                    note.sourceChordId = -1; // fully inside the new gesture — unlink
+                else if (noteEnd > chipStart)
+                    note.lengthBeats = chipStart - note.startBeat;
+            }
+        }
+        else
+        {
+            const auto removedId = other.id;
+            _chordBlocks.erase(_chordBlocks.begin() + i);
+            for (auto& note : _notes)
+            {
+                if (note.sourceChordId == removedId)
+                    note.sourceChordId = -1;
+            }
+        }
+    }
+
+    const auto chordId = _nextChordBlockId++;
+    theory::ProgressionSlot slot { theory::Degree::I, frozen.popularityOrder > 0 ? frozen.popularityOrder : 1 };
+    _chordBlocks.push_back({
+        chordId,
+        frozen.readableName.empty() ? detection.name : frozen.readableName,
+        chipStart,
+        length,
+        slot,
+        frozen
+    });
+
+    for (const int idx : validIndices)
+        _notes[static_cast<std::size_t>(idx)].sourceChordId = chordId;
+
+    _recordDirty = true;
+}
+
+void MidiEditor::pollRecordingCapture()
+{
+    if (!_isRecording || _inputMidiNoteTracker == nullptr)
+        return;
+
+    // Cheap path: only expand the loop when the playhead nears the end (no MIDI work).
+    ensureRecordingLoopCoversPlayhead();
+
+    // Skip MIDI edge detection unless host input actually changed (generation counter).
+    const auto gen = _inputMidiNoteTracker->getGeneration();
+    if (gen == _lastRecordCaptureGeneration)
+        return;
+    _lastRecordCaptureGeneration = gen;
+
+    const auto playhead = getUiPlayheadBeat();
+    const auto heldNotes = _inputMidiNoteTracker->getHeldNotes();
+
+    std::array<bool, 128> held {};
+    held.fill(false);
+    for (const int n : heldNotes)
+    {
+        if (n >= 0 && n < 128)
+            held[static_cast<std::size_t>(n)] = true;
+    }
+
+    bool wrote = false;
+
+    // Note-ons: newly held (only scan previously-held + currently-held candidates).
+    for (const int n : heldNotes)
+    {
+        if (n < 0 || n >= 128)
+            continue;
+        if (!_recordPreviouslyHeld[static_cast<std::size_t>(n)])
+            _recordNoteOnBeats[n] = playhead;
+    }
+
+    // Note-offs: were held, no longer held.
+    for (auto it = _recordNoteOnBeats.begin(); it != _recordNoteOnBeats.end(); )
+    {
+        const int n = it->first;
+        if (n >= 0 && n < 128 && held[static_cast<std::size_t>(n)])
+        {
+            ++it;
+            continue;
+        }
+
+        const auto startBeat = it->second;
+        const auto length = juce::jmax(0.25, playhead - startBeat);
+        _notes.push_back({ n, startBeat, length, -1 });
+        _recordSliceNoteIndices.push_back(static_cast<int>(_notes.size()) - 1);
+        it = _recordNoteOnBeats.erase(it);
+        wrote = true;
+        _recordDirty = true;
+    }
+
+    _recordPreviouslyHeld = held;
+
+    // Gesture complete (silence): promote multi-note slices to chord-lane blocks.
+    if (wrote && _recordNoteOnBeats.empty())
+        commitRecordedSliceIfChord();
+
+    // Local paint only — never notify AppLayout / ValueTree / next-chord mid-take.
+    if (wrote)
+        repaint();
 }
 
 bool MidiEditor::isPlaying() const
@@ -637,10 +991,14 @@ void MidiEditor::removeListener(Listener* listener)
 
 void MidiEditor::notifyContentChanged()
 {
-    recomputeLoopBoundsFromContent();
+    // While recording, loop bounds are owned by the record runway — never shrink mid-take.
+    if (!_isRecording)
+        recomputeLoopBoundsFromContent();
 
     // Keep a playing loop in sync with live edits - audible on the next pass rather than stale.
-    if (_progressionPlayer != nullptr && _progressionPlayer->isPlaying())
+    // During record we do *not* re-upload notes every capture: live input already sounds via the
+    // host path; re-scheduling would thrash the audio double-buffer and fight the live notes.
+    if (_progressionPlayer != nullptr && _progressionPlayer->isPlaying() && !_isRecording)
     {
         std::vector<audio::ScheduledNote> scheduledNotes;
         scheduledNotes.reserve(_notes.size());
@@ -657,7 +1015,7 @@ void MidiEditor::notifyContentChanged()
 
 void MidiEditor::recomputeLoopBoundsFromContent()
 {
-    if (_loopManuallyAdjusted || _notes.empty())
+    if (_loopManuallyAdjusted || _notes.empty() || _isRecording)
         return;
 
     auto minStart = std::numeric_limits<double>::max();
@@ -1021,7 +1379,11 @@ void MidiEditor::timerCallback()
 
     if (_dragMode == DragMode::None)
     {
-        // Keep playhead / live MIDI-input piano highlights in sync with the audio thread.
+        if (_isRecording)
+            pollRecordingCapture();
+
+        // Playhead line needs paint while transport runs. Live MIDI piano highlight only when
+        // input generation changes (not every timer tick while recording idly).
         auto needsRepaint = isPlaying();
         if (_inputMidiNoteTracker != nullptr)
         {
@@ -1680,7 +2042,10 @@ void MidiEditor::paintPianoKeyboard(juce::Graphics& g) const
 
 double MidiEditor::effectiveChordBlockLength(const ChordBlockData& block) const
 {
-    auto maxLength = 0.0;
+    // Span from the chip's start to the latest end of any note still tagged with this block.
+    // Tracks live note resizes (can grow past the original stored lengthBeats). Recorded-chip
+    // collision resolution clips notes so this span stays non-overlapping.
+    auto maxEnd = block.startBeat;
     auto foundAny = false;
 
     for (const auto& note : _notes)
@@ -1689,10 +2054,13 @@ double MidiEditor::effectiveChordBlockLength(const ChordBlockData& block) const
             continue;
 
         foundAny = true;
-        maxLength = juce::jmax(maxLength, note.lengthBeats);
+        maxEnd = juce::jmax(maxEnd, note.startBeat + note.lengthBeats);
     }
 
-    return foundAny ? maxLength : block.lengthBeats;
+    if (foundAny)
+        return juce::jmax(kSnapBeats, maxEnd - block.startBeat);
+
+    return juce::jmax(kSnapBeats, block.lengthBeats);
 }
 
 float MidiEditor::beatToX(double beat) const noexcept
