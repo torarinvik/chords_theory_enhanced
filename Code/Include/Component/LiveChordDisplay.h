@@ -6,6 +6,7 @@
 #include <nierika_dsp/nierika_dsp.h>
 
 #include "Audio/InputMidiNoteTracker.h"
+#include "Theory/ChordDetector.h"
 #include "Theory/Key.h"
 #include "Theory/Scale.h"
 
@@ -36,12 +37,14 @@ public:
 private:
     void timerCallback() override;
     void refreshFromTracker(bool force);
+    void applyDetection(const theory::ChordDetection& detection);
     void syncEmptyLabel();
 
     audio::InputMidiNoteTracker* _tracker = nullptr;
     theory::Key _spellKey = theory::Key::C;
     theory::Scale _scale = theory::Scale::Major;
     std::uint32_t _lastGeneration = 0;
+    std::uint32_t _lastHarmonyId = 0; // pitch-class mask + bass — stable across re-triggers
     std::string _displayedName;
     std::string _qualityHint;
     std::string _romanHint;
@@ -49,9 +52,9 @@ private:
     std::string _emptyLabel;
     bool _hasChord = false;
     float _confidence = 0.f;
-    // Hold the previous name briefly when a low-confidence flip arrives (reduces flicker).
-    int _holdFrames = 0;
-    std::string _heldName;
+    // Debounce: require the same new name for a few frames before flipping.
+    std::string _pendingName;
+    int _pendingFrames = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(LiveChordDisplay)
 };

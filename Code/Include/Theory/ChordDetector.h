@@ -18,20 +18,22 @@ struct ChordDetection
     bool matched = false;
     std::string name; // e.g. "Am9", "C/E", "G7b9", single note "F#"
     std::string alternateName; // second-best reading when useful (e.g. "Am7" vs "C6")
-    std::string romanNumeral; // diatonic function in spellKey+scale when available ("ii", "V")
+    std::string romanNumeral; // function in key: "ii", "V", "V/ii", "subV/I", "iv (mixture)"
     int rootPitchClass = 0;
     int bassPitchClass = 0;
     // Set when the match is one of TriadLibrary's core qualities; otherwise Major as placeholder.
     TriadQuality quality = TriadQuality::Major;
     bool hasLibraryQuality = false;
+    bool fromChordDatabase = false; // true when name came from an exact chords.json match
     std::string qualityLabel; // e.g. "m9", "maj7", "7sus4", "dim7"
     int toneCount = 0; // required tones matched (excl. optional omissions)
     float confidence = 0.f; // 0–1, higher = clearer match vs runners-up
 };
 
 // Stateless detector: maps live MIDI pitch classes → a readable chord name.
-// Catalogue covers triads through 13ths, alters, sixths, add tones, sus, dim7, rootless shells.
-// Forbidden-interval rules keep maj/min/sus distinct. Optional scale enables roman numerals.
+// Combines a large quality catalogue with optional exact matches against chords.json for the
+// current key/scale. Forbidden-interval rules keep maj/min/sus distinct. With scale set: roman
+// numerals, secondary dominants, mixture labels, and diatonic scoring bias.
 class ChordDetector
 {
 public:

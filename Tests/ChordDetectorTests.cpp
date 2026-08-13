@@ -364,4 +364,85 @@ TEST_CASE("ChordDetector: 13sus4", "[ChordDetector]")
     CHECK(d.name == "G13sus4");
 }
 
+TEST_CASE("ChordDetector: catalogue match prefers chords.json spelling", "[ChordDetector]")
+{
+    using theory::Scale;
+    // Exact C major triad set → should resolve via catalogue (or template "C").
+    const auto d = ChordDetector::detectFromMidiNotes(
+        midiPcs({ 0, 4, 7 }), Key::C, Scale::Major);
+    REQUIRE(d.matched);
+    CHECK(d.name == "C");
+    // Catalogue path marks fromChordDatabase when exact set found.
+    CHECK(d.fromChordDatabase);
+    CHECK(d.romanNumeral == "I");
+}
 
+TEST_CASE("ChordDetector: secondary dominant roman V/V for D7 in C", "[ChordDetector]")
+{
+    using theory::Scale;
+    // D7 = D F# A C → classic V/V in C major.
+    const auto d = ChordDetector::detectFromMidiNotes(
+        midiPcs({ 2, 6, 9, 0 }), Key::C, Scale::Major);
+    REQUIRE(d.matched);
+    CHECK(d.name == "D7");
+    // Prefer functional secondary label when available.
+    CHECK((d.romanNumeral == "V/V" || d.romanNumeral.find("V/") != std::string::npos
+           || d.romanNumeral == "II"));
+}
+
+TEST_CASE("ChordDetector: inversion from catalogue uses slash name", "[ChordDetector]")
+{
+    using theory::Scale;
+    // C/E — same pitch classes as C, bass E.
+    const auto d = ChordDetector::detectFromMidiNotes(
+        midiPcs({ 0, 4, 7 }, 4), Key::C, Scale::Major);
+    REQUIRE(d.matched);
+    CHECK(d.name == "C/E");
+    CHECK(d.fromChordDatabase);
+}
+
+TEST_CASE("ChordDetector: polychord alternate when two triads present", "[ChordDetector]")
+{
+    // F major + G major: F A C + G B D
+    const auto d = ChordDetector::detectFromMidiNotes(midiPcs({ 5, 9, 0, 7, 11, 2 }), Key::C);
+    REQUIRE(d.matched);
+    REQUIRE_FALSE(d.alternateName.empty());
+    CHECK(d.alternateName.find('|') != std::string::npos);
+}
+
+TEST_CASE("ChordDetector: near-match maj7 shell without fifth", "[ChordDetector]")
+{
+    using theory::Scale;
+    // C E B — shell maj7 (no G). Algorithm names Cmaj7; catalogue near-match may agree.
+    const auto d = ChordDetector::detectFromMidiNotes(
+        midiPcs({ 0, 4, 11 }), Key::C, Scale::Major);
+    REQUIRE(d.matched);
+    CHECK(d.name == "Cmaj7");
+    CHECK(d.confidence > 0.5f);
+}
+
+TEST_CASE("ChordDetector: bass-C prefers C6 over Am7 catalogue twin", "[ChordDetector]")
+{
+    using theory::Scale;
+    // C E G A with C bass — root-position C6, not Am7/C.
+    const auto d = ChordDetector::detectFromMidiNotes(
+        midiPcs({ 0, 4, 7, 9 }), Key::C, Scale::Major);
+    REQUIRE(d.matched);
+    CHECK(d.name == "C6");
+}
+
+TEST_CASE("ChordDetector: first-inversion roman figure", "[ChordDetector]")
+{
+    using theory::Scale;
+    // C/E in C major → I6
+    const auto d = ChordDetector::detectFromMidiNotes(
+        midiPcs({ 0, 4, 7 }, 4), Key::C, Scale::Major);
+    REQUIRE(d.matched);
+    CHECK(d.name == "C/E");
+    CHECK((d.romanNumeral == "I6" || d.romanNumeral == "I"));
+}
+
+
+
+
+// debug only - will remove

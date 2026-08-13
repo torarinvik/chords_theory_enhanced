@@ -1,10 +1,36 @@
 #include "Component/LiveChordDisplay.h"
 
+#include <algorithm>
+#include <cstdint>
+
 #include "AppLocalisation.h"
 #include "Theory/ChordDetector.h"
 
 namespace component
 {
+
+namespace
+{
+    // Stable identity for held harmony (pitch-class mask + bass PC).
+    std::uint32_t harmonyId(const std::vector<int>& heldNotes)
+    {
+        if (heldNotes.empty())
+            return 0;
+        std::uint16_t mask = 0;
+        int bass = 128;
+        for (const int n : heldNotes)
+        {
+            if (n < 0 || n > 127)
+                continue;
+            mask = static_cast<std::uint16_t>(mask | (1u << (((n % 12) + 12) % 12)));
+            bass = std::min(bass, n);
+        }
+        if (bass > 127)
+            return 0;
+        return (static_cast<std::uint32_t>(mask) << 8)
+            | static_cast<std::uint32_t>(((bass % 12) + 12) % 12);
+    }
+}
 
 LiveChordDisplay::LiveChordDisplay(const std::string& identifier,
                                    audio::InputMidiNoteTracker* inputMidiNoteTracker):
@@ -60,6 +86,37 @@ void LiveChordDisplay::timerCallback()
     refreshFromTracker(false);
 }
 
+void LiveChordDisplay::applyDetection(const theory::ChordDetection& detection)
+{
+    const auto nextName = detection.matched ? detection.name : std::string {};
+    const auto nextHas = detection.matched && !nextName.empty();
+    std::string nextHint;
+    if (nextHas && !detection.qualityLabel.empty()
+        && detection.qualityLabel != "note"
+        && detection.qualityLabel != "dyad"
+        && detection.qualityLabel != "cluster"
+        && detection.qualityLabel != "maj"
+        && detection.qualityLabel != "catalogue")
+    {
+        nextHint = detection.qualityLabel;
+    }
+
+    if (nextHas == _hasChord && nextName == _displayedName && nextHint == _qualityHint
+        && detection.romanNumeral == _romanHint && detection.alternateName == _alternateHint
+        && std::abs(detection.confidence - _confidence) < 0.02f)
+        return;
+
+    _hasChord = nextHas;
+    _displayedName = nextName;
+    _qualityHint = std::move(nextHint);
+    _romanHint = detection.romanNumeral;
+    _alternateHint = detection.alternateName;
+    _confidence = detection.confidence;
+    _pendingName.clear();
+    _pendingFrames = 0;
+    repaint();
+}
+
 void LiveChordDisplay::refreshFromTracker(bool force)
 {
     if (_tracker == nullptr)
@@ -71,70 +128,62 @@ void LiveChordDisplay::refreshFromTracker(bool force)
             _qualityHint.clear();
             _romanHint.clear();
             _alternateHint.clear();
-            _holdFrames = 0;
+            _pendingName.clear();
+            _pendingFrames = 0;
+            _lastHarmonyId = 0;
             repaint();
         }
         return;
     }
 
-    const auto gen = _tracker->getGeneration();
-    if (!force && gen == _lastGeneration)
-    {
-        if (_holdFrames > 0)
-        {
-            --_holdFrames;
-            if (_holdFrames == 0 && !_heldName.empty() && _heldName != _displayedName)
-            {
-                // Hold expired — already showing new name.
-            }
-        }
-        return;
-    }
-    _lastGeneration = gen;
-
     const auto held = _tracker->getHeldNotes();
+    const auto id = harmonyId(held);
+    const auto gen = _tracker->getGeneration();
+
+    // Skip work when neither MIDI generation nor the PC/bass identity changed
+    // (re-triggers of the same notes still bump generation — ignore those).
+    if (!force && gen == _lastGeneration && id == _lastHarmonyId)
+        return;
+
+    // Same harmony identity: only generation noise (re-attack). Keep display stable.
+    if (!force && id == _lastHarmonyId && id != 0)
+    {
+        _lastGeneration = gen;
+        return;
+    }
+
+    _lastGeneration = gen;
+    _lastHarmonyId = id;
+
     const auto detection = theory::ChordDetector::detectFromMidiNotes(held, _spellKey, _scale);
+    const auto nextName = detection.matched ? detection.name : std::string {};
 
-    auto nextName = detection.matched ? detection.name : std::string {};
-    const auto nextHas = detection.matched && !nextName.empty();
-    std::string nextHint;
-    if (nextHas && !detection.qualityLabel.empty()
-        && detection.qualityLabel != "note"
-        && detection.qualityLabel != "dyad"
-        && detection.qualityLabel != "cluster"
-        && detection.qualityLabel != "maj")
+    // Debounce name flips on dense / ambiguous voicings: require two consecutive
+    // identical new names before committing (unless clearing or forced).
+    if (!force && _hasChord && !nextName.empty() && nextName != _displayedName)
     {
-        nextHint = detection.qualityLabel;
-    }
-    const auto nextRoman = detection.romanNumeral;
-    const auto nextAlt = detection.alternateName;
-    const auto nextConf = detection.confidence;
+        // Immediate accept when confidence is clearly higher.
+        if (detection.confidence >= _confidence + 0.12f || detection.confidence >= 0.85f)
+        {
+            applyDetection(detection);
+            return;
+        }
 
-    // Hysteresis: if we already show a solid name and the new reading is shaky and different,
-    // keep the old name for a few frames so the label does not flicker between twins (C6/Am7).
-    if (!force && _hasChord && nextHas && nextName != _displayedName
-        && _confidence >= 0.65f && nextConf < 0.55f)
-    {
-        _holdFrames = 4;
-        _heldName = nextName;
-        // Keep painting the previous name; still refresh soft hints if empty.
+        if (nextName == _pendingName)
+        {
+            ++_pendingFrames;
+            if (_pendingFrames >= 2)
+                applyDetection(detection);
+            return;
+        }
+
+        _pendingName = nextName;
+        _pendingFrames = 1;
+        // Keep showing the previous solid name while we wait for confirmation.
         return;
     }
 
-    if (nextHas == _hasChord && nextName == _displayedName && nextHint == _qualityHint
-        && nextRoman == _romanHint && nextAlt == _alternateHint
-        && std::abs(nextConf - _confidence) < 0.02f)
-        return;
-
-    _hasChord = nextHas;
-    _displayedName = nextName;
-    _qualityHint = std::move(nextHint);
-    _romanHint = nextRoman;
-    _alternateHint = nextAlt;
-    _confidence = nextConf;
-    _holdFrames = 0;
-    _heldName.clear();
-    repaint();
+    applyDetection(detection);
 }
 
 void LiveChordDisplay::paint(juce::Graphics& g)
@@ -156,6 +205,18 @@ void LiveChordDisplay::paint(juce::Graphics& g)
         g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::ACCENT).asJuce()
             .withAlpha(0.25f + _confidence * 0.25f));
         g.drawRoundedRectangle(bounds, 6.f, 1.f);
+
+        // Slim confidence meter along the bottom edge of the pill.
+        if (_confidence > 0.05f && bounds.getWidth() > 20.f)
+        {
+            auto meter = bounds.removeFromBottom(2.5f).reduced(6.f, 0.f);
+            g.setColour(juce::Colours::black.withAlpha(0.2f));
+            g.fillRoundedRectangle(meter, 1.f);
+            auto fill = meter.withWidth(meter.getWidth() * _confidence);
+            g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::ACCENT).asJuce().withAlpha(0.75f));
+            g.fillRoundedRectangle(fill, 1.f);
+            bounds = getLocalBounds().toFloat().reduced(4.f, 2.f).withTrimmedBottom(3.f);
+        }
     }
 
     if (showChord && bounds.getHeight() >= 26.f && bounds.getWidth() >= 120.f
