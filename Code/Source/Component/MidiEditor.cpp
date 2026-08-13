@@ -1,5 +1,7 @@
 #include "Component/MidiEditor.h"
 
+#include "Theory/ChordDisplay.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -1116,11 +1118,19 @@ void MidiEditor::paintChordLane(juce::Graphics& g) const
 
         if (block.hasAttachedScale)
         {
-            // Chord name on the left, attached scale on the right (before the ×).
+            // Absolute name + roman in the attached scale (e.g. "Am · ii"), scale name on the right.
             auto nameArea = labelBounds.reduced(4.f, 0.f);
-            auto scaleArea = nameArea.removeFromRight(juce::jmin(nameArea.getWidth() * 0.55f, 110.f));
+            auto scaleArea = nameArea.removeFromRight(juce::jmin(nameArea.getWidth() * 0.48f, 100.f));
+
+            const theory::Chord& harmony = !block.frozenChord.notes.empty()
+                ? block.frozenChord
+                : theory::Chord {};
+            const auto displayName = !harmony.notes.empty()
+                ? theory::formatAbsoluteWithRoman(harmony, block.attachedScaleKey, block.attachedScale, block.label)
+                : block.label;
+
             g.setColour(textColour);
-            g.drawText(block.label, nameArea, juce::Justification::centredLeft, true);
+            g.drawText(displayName, nameArea, juce::Justification::centredLeft, true);
 
             const auto scaleText = theory::getKeyLabel(block.attachedScaleKey) + " "
                 + juce::translate(theory::getScaleTranslationKey(block.attachedScale)).toStdString();
