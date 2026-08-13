@@ -1119,10 +1119,20 @@ theory::Chord MidiEditor::harmonyForChordBlock(const ChordBlockData& block) cons
 
 std::string MidiEditor::chordBlockDisplayName(const ChordBlockData& block) const
 {
+    // Romans only when a scale is attached to this chip — analysed in that scale's key.
+    if (!block.hasAttachedScale)
+        return block.label;
+
     const auto harmony = harmonyForChordBlock(block);
-    const auto key = block.hasAttachedScale ? block.attachedScaleKey : _analysisKey;
-    const auto scale = block.hasAttachedScale ? block.attachedScale : _analysisScale;
-    return theory::formatAbsoluteWithRoman(harmony, key, scale, block.label);
+    return theory::formatAbsoluteWithRoman(
+        harmony, block.attachedScaleKey, block.attachedScale, block.label);
+}
+
+std::string MidiEditor::getChordBlockDisplayLabel(int index) const
+{
+    if (index < 0 || index >= static_cast<int>(_chordBlocks.size()))
+        return {};
+    return chordBlockDisplayName(_chordBlocks[static_cast<std::size_t>(index)]);
 }
 
 void MidiEditor::paintChordLane(juce::Graphics& g) const
@@ -1162,18 +1172,19 @@ void MidiEditor::paintChordLane(juce::Graphics& g) const
         if (showDelete)
             labelBounds.removeFromRight(kChordDeleteButtonSize + kChordDeleteButtonPad * 2.f);
 
-        // Absolute + roman always (session key/scale, or attached scale when present).
-        // Paint in two colours so the roman (e.g. "IV", "bVII") is easy to spot.
-        const auto harmony = harmonyForChordBlock(block);
-        const auto key = block.hasAttachedScale ? block.attachedScaleKey : _analysisKey;
-        const auto scale = block.hasAttachedScale ? block.attachedScale : _analysisScale;
         const auto absolute = block.label;
-        const auto roman = theory::romanForChordInKeyScale(harmony, key, scale);
-
+        // Roman numerals only when a scale is attached — relative to that attached key/scale.
+        std::string roman;
         if (block.hasAttachedScale)
         {
+            const auto harmony = harmonyForChordBlock(block);
+            roman = theory::romanForChordInKeyScale(
+                harmony, block.attachedScaleKey, block.attachedScale);
+
             // Compact scale tag on the far right; leave most width for "Am - ii".
-            auto scaleArea = labelBounds.removeFromRight(juce::jmin(72.f, labelBounds.getWidth() * 0.32f));
+            // Cap the scale area so a long name can't crowd out the roman.
+            const auto scaleCap = juce::jmin(64.f, juce::jmax(36.f, labelBounds.getWidth() * 0.28f));
+            auto scaleArea = labelBounds.removeFromRight(scaleCap);
             const auto scaleText = theory::getKeyLabel(block.attachedScaleKey) + " "
                 + juce::translate(theory::getScaleTranslationKey(block.attachedScale)).toStdString();
             g.setColour(AppSettings::getInstance().getScaleHighlightColour());
@@ -1190,11 +1201,11 @@ void MidiEditor::paintChordLane(juce::Graphics& g) const
             const auto absChars = static_cast<float>(juce::jmax(1, static_cast<int>(absolute.size())));
             const auto romChars = static_cast<float>(juce::jmax(1, static_cast<int>(roman.size()) + 2));
             const auto absWidth = labelBounds.getWidth() * (absChars / (absChars + romChars + 0.5f));
-            auto absArea = labelBounds.removeFromLeft(juce::jmax(28.f, absWidth));
+            auto absArea = labelBounds.removeFromLeft(juce::jmax(24.f, absWidth));
             g.setColour(textColour);
             g.drawText(absolute, absArea, juce::Justification::centredLeft, true);
             g.setColour(accent.brighter(0.15f));
-            g.drawText("- " + roman, labelBounds, juce::Justification::centredLeft, true);
+            g.drawText("- " + juce::String(roman), labelBounds, juce::Justification::centredLeft, true);
         }
         else
         {

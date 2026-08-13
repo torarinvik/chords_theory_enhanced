@@ -107,6 +107,9 @@ public:
     [[nodiscard]] theory::MidiEditorState getMidiEditorState() const { return _midiEditor.getState(); }
     void restoreMidiEditorState(const theory::MidiEditorState& state) { _midiEditor.restoreState(state); }
 
+    // Playhead beat used to pick which chord-block's attached scale drives live roman analysis.
+    [[nodiscard]] double getPlayheadBeat() const { return _midiEditor.getPlayheadBeat(); }
+
     void addListener(Listener* listener);
     void removeListener(Listener* listener);
 

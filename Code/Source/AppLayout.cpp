@@ -316,21 +316,34 @@ void AppLayout::refreshLiveChordExpertContext()
         }
     }
 
-    // If the latest chord block has an attached scale, analyse romans in that scale
+    // If a progression chord has an attached scale, analyse live romans in that scale
     // (absolute names stay; roman side of the live readout follows the attached key/scale).
+    // Prefer the block under the playhead; fall back to the latest block by startBeat.
     if (!midiState.chordBlocks.empty())
     {
-        // Prefer the last block by startBeat.
-        const theory::MidiEditorChordBlockState* lastBlock = nullptr;
+        const auto playhead = _progressionEditor.getPlayheadBeat();
+        const theory::MidiEditorChordBlockState* analysisBlock = nullptr;
         for (const auto& block : midiState.chordBlocks)
         {
-            if (lastBlock == nullptr || block.startBeat >= lastBlock->startBeat)
-                lastBlock = &block;
+            const auto end = block.startBeat + block.lengthBeats;
+            if (playhead >= block.startBeat && playhead < end)
+            {
+                analysisBlock = &block;
+                break;
+            }
         }
-        if (lastBlock != nullptr && lastBlock->hasAttachedScale)
+        if (analysisBlock == nullptr)
         {
-            ctx.key = lastBlock->attachedScaleKey;
-            ctx.scale = lastBlock->attachedScale;
+            for (const auto& block : midiState.chordBlocks)
+            {
+                if (analysisBlock == nullptr || block.startBeat >= analysisBlock->startBeat)
+                    analysisBlock = &block;
+            }
+        }
+        if (analysisBlock != nullptr && analysisBlock->hasAttachedScale)
+        {
+            ctx.key = analysisBlock->attachedScaleKey;
+            ctx.scale = analysisBlock->attachedScale;
         }
     }
 

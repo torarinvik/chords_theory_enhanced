@@ -8,6 +8,7 @@
 
 using theory::ChordDetector;
 using theory::Key;
+using theory::Scale;
 using theory::TriadLibrary;
 using theory::TriadQuality;
 
@@ -336,6 +337,16 @@ TEST_CASE("ChordDetector: confidence and alternate for C6/Am7 twins", "[ChordDet
     // Alternate may be Am7/C or similar twin.
     if (!d.alternateName.empty())
         CHECK(d.alternateName != d.name);
+}
+
+TEST_CASE("ChordDetector: C major under A minor context is III not I", "[ChordDetector]")
+{
+    // Live readout when A Minor is attached to a C major chip / session override.
+    const auto notes = midiPcs({ 0, 4, 7 }); // C E G
+    const auto d = ChordDetector::detectFromMidiNotes(notes, Key::A, Scale::Minor);
+    REQUIRE(d.matched);
+    CHECK(d.name.find("C") != std::string::npos);
+    CHECK(d.romanNumeral == "III");
 }
 
 TEST_CASE("ChordDetector: roman numeral in C major", "[ChordDetector]")

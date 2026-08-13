@@ -7,6 +7,7 @@
 #include "Theory/MidiEditorState.h"
 #include "Theory/NoteConvertor.h"
 #include "Theory/ProgressionSlot.h"
+#include "Theory/TriadLibrary.h"
 
 using audio::ProgressionPlayer;
 using component::MidiEditor;
@@ -558,6 +559,31 @@ TEST_CASE("MidiEditor: attaching a scale to a chord block is round-tripped via g
     // Scale tones under playhead at beat 0: A Dorian root is pitch class 9.
     const auto scalePcs = restored.getPlayheadScalePitchClasses();
     CHECK(scalePcs[9]); // A
+}
+
+TEST_CASE("MidiEditor: roman numeral appears only when a scale is attached", "[MidiEditor]")
+{
+    // C major triad as "C" — no roman until a scale is attached.
+    const auto c = theory::TriadLibrary::makeTriad(0, theory::TriadQuality::Major, theory::Key::C, 0);
+    MidiEditor editor("test-midi-editor-roman");
+    editor.setBounds(0, 0, 800, 400);
+    editor.setAnalysisKeyAndScale(theory::Key::C, theory::Scale::Major);
+    editor.addChordAtBeat(0.0, c, testSlot(c));
+
+    REQUIRE(editor.getChordBlockCount() == 1);
+    const auto bare = editor.getChordBlockDisplayLabel(0);
+    CHECK(bare.find(" - ") == std::string::npos);
+    CHECK(bare.find("C") != std::string::npos);
+
+    // Attach A minor: C is III in A natural minor.
+    editor.attachScaleToChordBlock(0, theory::Key::A, theory::Scale::Minor);
+    const auto withScale = editor.getChordBlockDisplayLabel(0);
+    CHECK(withScale.find("C") != std::string::npos);
+    CHECK(withScale.find("III") != std::string::npos);
+    CHECK(withScale.find(" - ") != std::string::npos);
+
+    editor.clearScaleFromChordBlock(0);
+    CHECK(editor.getChordBlockDisplayLabel(0).find(" - ") == std::string::npos);
 }
 
 TEST_CASE("MidiEditor: tryParseScaleDragDescription parses scale payload", "[MidiEditor]")
