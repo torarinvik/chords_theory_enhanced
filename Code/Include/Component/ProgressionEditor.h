@@ -129,7 +129,10 @@ private:
     nelement::Text _presetsLabel { "progression-presets-label" };
     ProgressionPresetPicker _presetPicker;
     nelement::SVGButton _savePresetButton;
+    // Transport: play (toggle stop while running) | pause | record — record/pause are UI stubs for now.
     nelement::SVGButton _playButton { "progression-play-button", nui::Icons::getPlay() };
+    nelement::SVGButton _pauseButton { "progression-pause-button", nui::Icons::getPause() };
+    nelement::SVGButton _recordButton { "progression-record-button", nui::Icons::getRecord() };
     nelement::SVGButton _clearButton { "progression-clear-button", nui::Icons::getCross() };
 
     nelement::Text _bpmLabel { "progression-bpm-label", "", "BPM" };

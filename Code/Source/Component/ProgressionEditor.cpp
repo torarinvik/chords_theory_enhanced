@@ -33,6 +33,17 @@ ProgressionEditor::ProgressionEditor(const std::string& identifier,
 
     _playButton.setIconSize(16.f);
     _playButton.addOnClickListener(this);
+    _playButton.setHelpText(juce::translate("progression_play_tooltip").toStdString());
+
+    _pauseButton.setIconSize(16.f);
+    _pauseButton.addOnClickListener(this);
+    _pauseButton.setHelpText(juce::translate("progression_pause_tooltip").toStdString());
+
+    _recordButton.setIconSize(14.f);
+    _recordButton.addOnClickListener(this);
+    _recordButton.setHelpText(juce::translate("progression_record_tooltip").toStdString());
+    // Classic transport red for record (visual only until arm/record is wired).
+    _recordButton.setColour(juce::Colour(0xffe74c3c));
 
     _clearButton.setIconSize(14.f);
     _clearButton.addOnClickListener(this);
@@ -65,34 +76,38 @@ ProgressionEditor::ProgressionEditor(const std::string& identifier,
     _layout.setGap(8.f);
     _layout.setDisplayGrid(false);
 
-    // play | clear | gap | bpm label | bpm | gap | drag | live chord | presets label | picker | save
-    _layout.init({ 1, 1, 1 }, { 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1 });
+    // play | pause | record | clear | gap | bpm label | bpm | gap | drag | live | presets | picker | save
+    _layout.init({ 1, 1, 1 }, { 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1 });
 
-    _layout.setFixedColumnWidth(0, 32.f);
-    _layout.setFixedColumnWidth(1, 32.f);
-    _layout.setFixedColumnWidth(2, 8.f);
-    _layout.setFixedColumnWidth(3, 36.f);
-    _layout.setFixedColumnWidth(4, 96.f);
-    _layout.setFixedColumnWidth(5, 8.f);
-    _layout.setFixedColumnWidth(6, 150.f);
-    // Column 7 is flexible: live chord readout.
-    _layout.setFixedColumnWidth(8, 160.f);
-    _layout.setFixedColumnWidth(9, 220.f);
-    _layout.setFixedColumnWidth(10, 32.f);
+    _layout.setFixedColumnWidth(0, 32.f);  // play
+    _layout.setFixedColumnWidth(1, 32.f);  // pause
+    _layout.setFixedColumnWidth(2, 32.f);  // record
+    _layout.setFixedColumnWidth(3, 32.f);  // clear
+    _layout.setFixedColumnWidth(4, 8.f);   // gap
+    _layout.setFixedColumnWidth(5, 36.f);  // bpm label
+    _layout.setFixedColumnWidth(6, 96.f);  // bpm slider
+    _layout.setFixedColumnWidth(7, 8.f);   // gap
+    _layout.setFixedColumnWidth(8, 150.f); // drag handle
+    // Column 9 is flexible: live chord readout.
+    _layout.setFixedColumnWidth(10, 160.f); // presets label
+    _layout.setFixedColumnWidth(11, 220.f); // picker
+    _layout.setFixedColumnWidth(12, 32.f);  // save
 
     _layout.setFixedRowHeight(0, kHeaderRowHeight);
     _layout.setFixedRowHeight(1, 12.f);
 
     _layout.addComponent(_playButton, 0, 0, 1, 1);
-    _layout.addComponent(_clearButton, 0, 1, 1, 1);
-    _layout.addComponent(_bpmLabel, 0, 3, 1, 1);
-    _layout.addComponent("progression-bpm-slider", _bpmSlider, 0, 4, 1, 1);
-    _layout.addComponent(_dragHandle, 0, 6, 1, 1);
-    _layout.addComponent(_liveChordDisplay, 0, 7, 1, 1);
-    _layout.addComponent(_presetsLabel, 0, 8, 1, 1);
-    _layout.addComponent(_presetPicker, 0, 9, 1, 1);
-    _layout.addComponent(_savePresetButton, 0, 10, 1, 1);
-    _layout.addComponent(_midiEditor, 2, 0, 11, 1);
+    _layout.addComponent(_pauseButton, 0, 1, 1, 1);
+    _layout.addComponent(_recordButton, 0, 2, 1, 1);
+    _layout.addComponent(_clearButton, 0, 3, 1, 1);
+    _layout.addComponent(_bpmLabel, 0, 5, 1, 1);
+    _layout.addComponent("progression-bpm-slider", _bpmSlider, 0, 6, 1, 1);
+    _layout.addComponent(_dragHandle, 0, 8, 1, 1);
+    _layout.addComponent(_liveChordDisplay, 0, 9, 1, 1);
+    _layout.addComponent(_presetsLabel, 0, 10, 1, 1);
+    _layout.addComponent(_presetPicker, 0, 11, 1, 1);
+    _layout.addComponent(_savePresetButton, 0, 12, 1, 1);
+    _layout.addComponent(_midiEditor, 2, 0, 13, 1);
 }
 
 ProgressionEditor::~ProgressionEditor()
@@ -100,6 +115,8 @@ ProgressionEditor::~ProgressionEditor()
     _presetPicker.removeListener(this);
     _savePresetButton.removeListener(this);
     _playButton.removeListener(this);
+    _pauseButton.removeListener(this);
+    _recordButton.removeListener(this);
     _clearButton.removeListener(this);
     _dragHandle.removeListener(this);
     _midiEditor.removeListener(this);
@@ -248,6 +265,13 @@ void ProgressionEditor::onButtonClick(const std::string& componentID)
             _midiEditor.stopPlayback();
         else
             _midiEditor.startPlayback();
+        return;
+    }
+
+    // Pause / record: UI present; behaviour wired in a follow-up.
+    if (componentID == _pauseButton.getComponentID()
+        || componentID == _recordButton.getComponentID())
+    {
         return;
     }
 

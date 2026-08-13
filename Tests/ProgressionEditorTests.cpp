@@ -243,3 +243,33 @@ TEST_CASE("ProgressionEditor: clicking the play button toggles playback and swap
     CHECK_FALSE(midiEditor->isPlaying());
     CHECK(playButton->getIconBinary() == nui::Icons::getPlay());
 }
+
+TEST_CASE("ProgressionEditor: transport header exposes pause and record buttons", "[ProgressionEditor]")
+{
+    ProgressionEditor sequencer("test-sequencer-transport",
+        [](const ProgressionSlot&) -> const Chord* { return nullptr; });
+    sequencer.setBounds(0, 0, 800, 400);
+
+    auto* play = dynamic_cast<nelement::SVGButton*>(sequencer.findChildWithID("progression-play-button"));
+    auto* pause = dynamic_cast<nelement::SVGButton*>(sequencer.findChildWithID("progression-pause-button"));
+    auto* record = dynamic_cast<nelement::SVGButton*>(sequencer.findChildWithID("progression-record-button"));
+    auto* clear = dynamic_cast<nelement::SVGButton*>(sequencer.findChildWithID("progression-clear-button"));
+
+    REQUIRE(play != nullptr);
+    REQUIRE(pause != nullptr);
+    REQUIRE(record != nullptr);
+    REQUIRE(clear != nullptr);
+
+    CHECK(play->getIconBinary() == nui::Icons::getPlay());
+    CHECK(pause->getIconBinary() == nui::Icons::getPause());
+    CHECK(record->getIconBinary() == nui::Icons::getRecord());
+
+    // Stubs: clicks must not throw / crash (no behaviour yet).
+    triggerButtonClick(*pause);
+    triggerButtonClick(*record);
+
+    // Play | Pause | Record sit left of Clear in the header.
+    CHECK(play->getX() < pause->getX());
+    CHECK(pause->getX() < record->getX());
+    CHECK(record->getX() < clear->getX());
+}
