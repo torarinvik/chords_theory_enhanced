@@ -3,7 +3,9 @@
 #include <set>
 
 #include "AppLocalisation.h"
+#include "AppSettings.h"
 #include "Theory/ChordDatabase.h"
+#include "Theory/ChordExpert.h"
 #include "Theory/MidiExporter.h"
 #include "Theory/NextChordSequenceContext.h"
 #include "Theory/NoteConvertor.h"
@@ -70,6 +72,7 @@ AppLayout::AppLayout(ndsp::ParameterManager& parameterManager, PluginAudioProces
     _progressionEditor.addListener(this);
     _progressionEditor.setScale(_keyScaleSelector.getScale());
     _progressionEditor.setKey(_keyScaleSelector.getKey());
+    refreshLiveChordExpertContext();
 
     _voicingSelector.addListener(this);
     _voicingSelector.setDismissExemptComponent(&_chordBrowser);
@@ -241,6 +244,7 @@ void AppLayout::onKeyScaleChanged(theory::Key key, theory::Scale scale)
     _progressionEditor.setKey(key);
     refreshNextChordSequenceContext();
     refreshScaleSuggestions();
+    refreshLiveChordExpertContext();
 
     syncStateToValueTree();
 }
@@ -275,6 +279,69 @@ void AppLayout::refreshScaleSuggestions()
         _keyScaleSelector.getSearchScope() == component::KeyScaleSelector::SearchScope::All
             ? theory::NextScaleGenerator::Pool::All
             : theory::NextScaleGenerator::Pool::Predicted);
+}
+
+void AppLayout::refreshLiveChordExpertContext()
+{
+    theory::ChordExpertContext ctx;
+    ctx.key = _keyScaleSelector.getKey();
+    ctx.scale = _keyScaleSelector.getScale();
+    ctx.style = AppSettings::getInstance().getChordNamingStyle();
+
+    // Progression blocks (oldest → newest), then pinned/current audition if present.
+    const auto& keyScale = theory::ChordDatabase::getInstance().get(ctx.key, ctx.scale);
+    const auto midiState = _progressionEditor.getMidiEditorState();
+    const auto timeline = theory::buildProgressionTimeline(midiState, keyScale);
+    ctx.previousChords.reserve(timeline.events.size() + 2);
+    for (const auto& event : timeline.events)
+        ctx.previousChords.push_back(event.chord);
+
+    if (const auto& cur = _nextChordPanel.getCurrentChord(); cur && !cur->notes.empty())
+    {
+        // Avoid duplicating the last timeline chord when it is already "current".
+        if (ctx.previousChords.empty()
+            || ctx.previousChords.back().readableName != cur->readableName
+            || ctx.previousChords.back().symbol != cur->symbol)
+        {
+            ctx.previousChords.push_back(*cur);
+        }
+    }
+
+    if (_lastPreviewChord && !_lastPreviewChord->notes.empty())
+    {
+        if (ctx.previousChords.empty()
+            || ctx.previousChords.back().readableName != _lastPreviewChord->readableName)
+        {
+            ctx.previousChords.push_back(*_lastPreviewChord);
+        }
+    }
+
+    // If the latest chord block has an attached scale, analyse romans in that scale
+    // (absolute names stay; roman side of the live readout follows the attached key/scale).
+    if (!midiState.chordBlocks.empty())
+    {
+        // Prefer the last block by startBeat.
+        const theory::MidiEditorChordBlockState* lastBlock = nullptr;
+        for (const auto& block : midiState.chordBlocks)
+        {
+            if (lastBlock == nullptr || block.startBeat >= lastBlock->startBeat)
+                lastBlock = &block;
+        }
+        if (lastBlock != nullptr && lastBlock->hasAttachedScale)
+        {
+            ctx.key = lastBlock->attachedScaleKey;
+            ctx.scale = lastBlock->attachedScale;
+        }
+    }
+
+    // Keep a short lookback so naming stays local to recent harmony.
+    constexpr int kMaxHistory = 6;
+    if (static_cast<int>(ctx.previousChords.size()) > kMaxHistory)
+        ctx.previousChords.erase(
+            ctx.previousChords.begin(),
+            ctx.previousChords.end() - kMaxHistory);
+
+    _progressionEditor.setChordExpertContext(std::move(ctx));
 }
 
 void AppLayout::onChordChanged(theory::Degree degree, const theory::Chord& newChord)
@@ -347,6 +414,7 @@ void AppLayout::setCurrentChordForSuggestions(const theory::Chord& chord, bool p
 
     _nextChordPanel.setCurrentChord(chord, std::move(sequence));
     _scaleSuggestionPanel.setCurrentChord(chord);
+    refreshLiveChordExpertContext();
 }
 
 void AppLayout::syncNextChordFromProgressionTail()
@@ -505,6 +573,7 @@ void AppLayout::onContentChanged()
         syncNextChordFromProgressionTail();
     else
         refreshNextChordSequenceContext();
+    refreshLiveChordExpertContext();
     syncStateToValueTree();
 }
 

@@ -131,6 +131,11 @@ void ProgressionEditor::setKey(theory::Key key)
     _liveChordDisplay.setSpellKey(key);
 }
 
+void ProgressionEditor::setChordExpertContext(theory::ChordExpertContext context)
+{
+    _liveChordDisplay.setExpertContext(std::move(context));
+}
+
 void ProgressionEditor::loadPreset(const theory::ProgressionPreset& preset)
 {
     _midiEditor.clear();

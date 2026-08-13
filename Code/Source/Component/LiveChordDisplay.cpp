@@ -4,14 +4,13 @@
 #include <cstdint>
 
 #include "AppLocalisation.h"
-#include "Theory/ChordDetector.h"
+#include "AppSettings.h"
 
 namespace component
 {
 
 namespace
 {
-    // Stable identity for held harmony (pitch-class mask + bass PC).
     std::uint32_t harmonyId(const std::vector<int>& heldNotes)
     {
         if (heldNotes.empty())
@@ -39,7 +38,9 @@ LiveChordDisplay::LiveChordDisplay(const std::string& identifier,
 {
     setInterceptsMouseClicks(false, false);
     syncEmptyLabel();
+    syncStyleFromSettings();
     AppLocalisation::getChangeBroadcaster().addChangeListener(this);
+    AppSettings::getChangeBroadcaster().addChangeListener(this);
 
     if (_tracker != nullptr)
         startTimerHz(30);
@@ -49,31 +50,48 @@ LiveChordDisplay::~LiveChordDisplay()
 {
     stopTimer();
     AppLocalisation::getChangeBroadcaster().removeChangeListener(this);
+    AppSettings::getChangeBroadcaster().removeChangeListener(this);
 }
 
 void LiveChordDisplay::setSpellKey(theory::Key key)
 {
-    if (_spellKey == key)
+    if (_context.key == key)
         return;
-    _spellKey = key;
+    _context.key = key;
     refreshFromTracker(true);
 }
 
 void LiveChordDisplay::setScale(theory::Scale scale)
 {
-    if (_scale == scale)
+    if (_context.scale == scale)
         return;
-    _scale = scale;
+    _context.scale = scale;
     refreshFromTracker(true);
 }
 
 void LiveChordDisplay::setKeyAndScale(theory::Key key, theory::Scale scale)
 {
-    if (_spellKey == key && _scale == scale)
+    if (_context.key == key && _context.scale == scale)
         return;
-    _spellKey = key;
-    _scale = scale;
+    _context.key = key;
+    _context.scale = scale;
     refreshFromTracker(true);
+}
+
+void LiveChordDisplay::setExpertContext(theory::ChordExpertContext context)
+{
+    // Preserve key/scale already set from pickers if caller only updates history/style.
+    context.key = _context.key;
+    context.scale = _context.scale;
+    // Style always comes from settings (authoritative).
+    context.style = AppSettings::getInstance().getChordNamingStyle();
+    _context = std::move(context);
+    refreshFromTracker(true);
+}
+
+void LiveChordDisplay::syncStyleFromSettings()
+{
+    _context.style = AppSettings::getInstance().getChordNamingStyle();
 }
 
 void LiveChordDisplay::syncEmptyLabel()
@@ -86,34 +104,61 @@ void LiveChordDisplay::timerCallback()
     refreshFromTracker(false);
 }
 
-void LiveChordDisplay::applyDetection(const theory::ChordDetection& detection)
+void LiveChordDisplay::applyResult(const theory::ChordExpertResult& result)
 {
-    const auto nextName = detection.matched ? detection.name : std::string {};
-    const auto nextHas = detection.matched && !nextName.empty();
+    const auto& det = result.detection;
+    const auto nextName = det.matched ? det.name : std::string {};
+    const auto nextHas = det.matched && !nextName.empty();
+
     std::string nextHint;
-    if (nextHas && !detection.qualityLabel.empty()
-        && detection.qualityLabel != "note"
-        && detection.qualityLabel != "dyad"
-        && detection.qualityLabel != "cluster"
-        && detection.qualityLabel != "maj"
-        && detection.qualityLabel != "catalogue")
+    if (nextHas && !det.qualityLabel.empty()
+        && det.qualityLabel != "note"
+        && det.qualityLabel != "dyad"
+        && det.qualityLabel != "cluster"
+        && det.qualityLabel != "maj"
+        && det.qualityLabel != "catalogue"
+        && det.qualityLabel != "rootless")
     {
-        nextHint = detection.qualityLabel;
+        nextHint = det.qualityLabel;
     }
 
+    std::string nextAlt = det.alternateName;
+    if (nextAlt.empty() && !result.alternatives.empty())
+        nextAlt = result.alternatives.front();
+
     if (nextHas == _hasChord && nextName == _displayedName && nextHint == _qualityHint
-        && detection.romanNumeral == _romanHint && detection.alternateName == _alternateHint
-        && std::abs(detection.confidence - _confidence) < 0.02f)
+        && det.romanNumeral == _romanHint && nextAlt == _alternateHint
+        && result.explanation == _explanation
+        && std::abs(det.confidence - _confidence) < 0.02f)
         return;
 
     _hasChord = nextHas;
     _displayedName = nextName;
     _qualityHint = std::move(nextHint);
-    _romanHint = detection.romanNumeral;
-    _alternateHint = detection.alternateName;
-    _confidence = detection.confidence;
+    _romanHint = det.romanNumeral;
+    _alternateHint = nextAlt;
+    _explanation = result.explanation;
+    _confidence = det.confidence;
     _pendingName.clear();
     _pendingFrames = 0;
+
+    // Full narrative on hover.
+    if (_hasChord)
+    {
+        juce::String tip = _displayedName;
+        if (!_romanHint.empty())
+            tip << "  (" << _romanHint << ")";
+        if (!_explanation.empty())
+            tip << "\n" << _explanation;
+        if (!_alternateHint.empty() && _alternateHint != _displayedName)
+            tip << "\n" << juce::translate("live_chord_display_also") << " " << _alternateHint;
+        setTooltip(tip.toStdString());
+    }
+    else
+    {
+        setTooltip({});
+    }
+
     repaint();
 }
 
@@ -128,9 +173,11 @@ void LiveChordDisplay::refreshFromTracker(bool force)
             _qualityHint.clear();
             _romanHint.clear();
             _alternateHint.clear();
+            _explanation.clear();
             _pendingName.clear();
             _pendingFrames = 0;
             _lastHarmonyId = 0;
+            setTooltip({});
             repaint();
         }
         return;
@@ -140,12 +187,9 @@ void LiveChordDisplay::refreshFromTracker(bool force)
     const auto id = harmonyId(held);
     const auto gen = _tracker->getGeneration();
 
-    // Skip work when neither MIDI generation nor the PC/bass identity changed
-    // (re-triggers of the same notes still bump generation — ignore those).
     if (!force && gen == _lastGeneration && id == _lastHarmonyId)
         return;
 
-    // Same harmony identity: only generation noise (re-attack). Keep display stable.
     if (!force && id == _lastHarmonyId && id != 0)
     {
         _lastGeneration = gen;
@@ -155,17 +199,19 @@ void LiveChordDisplay::refreshFromTracker(bool force)
     _lastGeneration = gen;
     _lastHarmonyId = id;
 
-    const auto detection = theory::ChordDetector::detectFromMidiNotes(held, _spellKey, _scale);
-    const auto nextName = detection.matched ? detection.name : std::string {};
+    // Keep style in sync with settings (in case settings changed without force path).
+    _context.style = AppSettings::getInstance().getChordNamingStyle();
 
-    // Debounce name flips on dense / ambiguous voicings: require two consecutive
-    // identical new names before committing (unless clearing or forced).
+    const auto expert = theory::ChordExpert::analyse(held, _context);
+    const auto nextName = expert.detection.matched ? expert.detection.name : std::string {};
+
     if (!force && _hasChord && !nextName.empty() && nextName != _displayedName)
     {
-        // Immediate accept when confidence is clearly higher.
-        if (detection.confidence >= _confidence + 0.12f || detection.confidence >= 0.85f)
+        if (expert.detection.confidence >= _confidence + 0.12f
+            || expert.detection.confidence >= 0.85f
+            || expert.usedProgressionContext)
         {
-            applyDetection(detection);
+            applyResult(expert);
             return;
         }
 
@@ -173,17 +219,16 @@ void LiveChordDisplay::refreshFromTracker(bool force)
         {
             ++_pendingFrames;
             if (_pendingFrames >= 2)
-                applyDetection(detection);
+                applyResult(expert);
             return;
         }
 
         _pendingName = nextName;
         _pendingFrames = 1;
-        // Keep showing the previous solid name while we wait for confirmation.
         return;
     }
 
-    applyDetection(detection);
+    applyResult(expert);
 }
 
 void LiveChordDisplay::paint(juce::Graphics& g)
@@ -206,7 +251,6 @@ void LiveChordDisplay::paint(juce::Graphics& g)
             .withAlpha(0.25f + _confidence * 0.25f));
         g.drawRoundedRectangle(bounds, 6.f, 1.f);
 
-        // Slim confidence meter along the bottom edge of the pill.
         if (_confidence > 0.05f && bounds.getWidth() > 20.f)
         {
             auto meter = bounds.removeFromBottom(2.5f).reduced(6.f, 0.f);
@@ -223,7 +267,7 @@ void LiveChordDisplay::paint(juce::Graphics& g)
         && (!_qualityHint.empty() || !_romanHint.empty() || !_alternateHint.empty()))
     {
         auto nameArea = bounds;
-        auto side = nameArea.removeFromRight(juce::jmin(90.f, bounds.getWidth() * 0.38f));
+        auto side = nameArea.removeFromRight(juce::jmin(96.f, bounds.getWidth() * 0.4f));
 
         g.setFont(nui::Theme::newFont(nui::Theme::BOLD, nui::Theme::HEADING));
         g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::TEXT).asJuce());
@@ -277,6 +321,13 @@ void LiveChordDisplay::resized()
 void LiveChordDisplay::changeListenerCallback(juce::ChangeBroadcaster* source)
 {
     Component::changeListenerCallback(source);
+
+    if (source == &AppSettings::getChangeBroadcaster())
+    {
+        syncStyleFromSettings();
+        refreshFromTracker(true);
+        return;
+    }
 
     if (source == &AppLocalisation::getChangeBroadcaster())
     {

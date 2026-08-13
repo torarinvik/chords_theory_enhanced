@@ -4,6 +4,8 @@
 #include <juce_graphics/juce_graphics.h>
 #include <nierika_dsp/nierika_dsp.h>
 
+#include "Theory/ChordExpert.h"
+
 class AppSettings
 {
 public:
@@ -46,6 +48,10 @@ public:
 
     // Audio-thread-safe mute flag, kept in sync with getInstance()'s getMuted().
     [[nodiscard]] static bool isOutputMuted() noexcept;
+
+    // Live chord naming dialect (jazz chart / pop slash / classical). Global, like mute.
+    [[nodiscard]] theory::ChordNamingStyle getChordNamingStyle() const;
+    void setChordNamingStyle(theory::ChordNamingStyle style);
 
     // Fired after any setter that should refresh UI (theme is also announced via nui::Theme).
     static juce::ChangeBroadcaster& getChangeBroadcaster();
