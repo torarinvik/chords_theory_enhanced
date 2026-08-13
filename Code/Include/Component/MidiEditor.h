@@ -86,6 +86,9 @@ public:
     void resized() override;
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
 
+    // Session key/scale for chord-lane roman numerals (overridden per block when a scale is attached).
+    void setAnalysisKeyAndScale(theory::Key key, theory::Scale scale);
+
     // Snaps to the whole-bar (4-beat) cell startBeat falls in, then splits chord into N note
     // blocks (via theory::NoteConvertor::voiceChordCloseToMiddleC) plus one chord-lane block
     // (chord.readableName), spanning whatever's actually free in that cell: the full bar if
@@ -215,6 +218,9 @@ private:
     // paint helpers
     void paintGridlines(juce::Graphics&) const;
     void paintChordLane(juce::Graphics&) const;
+    // Absolute name + roman for a block (uses attached scale when set, else analysis key/scale).
+    [[nodiscard]] std::string chordBlockDisplayName(const ChordBlockData& block) const;
+    [[nodiscard]] theory::Chord harmonyForChordBlock(const ChordBlockData& block) const;
     void paintNotes(juce::Graphics&) const;
     void paintRuler(juce::Graphics&) const;
     void paintGutter(juce::Graphics&) const;
@@ -318,6 +324,10 @@ private:
     double _loopStartBeat = 0.0;
     double _loopEndBeat = kBeatsPerBar;
     bool _loopManuallyAdjusted = false;
+
+    // Default key/scale for roman numerals on chord chips (block attached scale overrides).
+    theory::Key _analysisKey = theory::Key::C;
+    theory::Scale _analysisScale = theory::Scale::Major;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MidiEditor)
 };

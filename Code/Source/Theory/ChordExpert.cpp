@@ -154,7 +154,7 @@ namespace
             if (looksDominant(*prev) && curRoot == resolutionTargetRoot(*prev))
                 parts.push_back("resolves previous dominant");
             else if (prevRoot == curRoot)
-                parts.push_back("same root · recolour");
+                parts.push_back("same root - recolour");
             else if (mod12(curRoot - prevRoot) == 5)
                 parts.push_back("up a fourth");
             else if (mod12(prevRoot - curRoot) == 5)
@@ -179,7 +179,7 @@ namespace
         for (std::size_t i = 0; i < parts.size(); ++i)
         {
             if (i > 0)
-                out += " · ";
+                out += " - ";
             out += parts[i];
         }
         return out;

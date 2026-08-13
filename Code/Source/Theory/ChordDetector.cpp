@@ -8,6 +8,7 @@
 
 #include "Theory/Chord.h"
 #include "Theory/ChordDatabase.h"
+#include "Theory/ChordDisplay.h"
 #include "Theory/HarmonicPredicates.h"
 #include "Theory/NextChordScorer.h"
 #include "Theory/NoteName.h"
@@ -600,33 +601,6 @@ namespace
         return false;
     }
 
-    std::string inversionFigure(int root, int bass, TriadQuality quality)
-    {
-        if (mod12(root) == mod12(bass))
-            return {};
-        // Only common classical figures for simple triads / sevenths.
-        if (quality == TriadQuality::Major || quality == TriadQuality::Minor
-            || quality == TriadQuality::Diminished || quality == TriadQuality::Augmented)
-        {
-            if (mod12(bass) == mod12(root + 3) || mod12(bass) == mod12(root + 4))
-                return "6"; // first inversion
-            if (mod12(bass) == mod12(root + 7) || mod12(bass) == mod12(root + 6)
-                || mod12(bass) == mod12(root + 8))
-                return "64"; // second inversion
-        }
-        if (quality == TriadQuality::Dominant7 || quality == TriadQuality::Major7
-            || quality == TriadQuality::Minor7 || quality == TriadQuality::HalfDim7)
-        {
-            if (mod12(bass) == mod12(root + 3) || mod12(bass) == mod12(root + 4))
-                return "65"; // approx first-inv seventh
-            if (mod12(bass) == mod12(root + 7) || mod12(bass) == mod12(root + 6))
-                return "43";
-            if (mod12(bass) == mod12(root + 10) || mod12(bass) == mod12(root + 11))
-                return "42";
-        }
-        return {};
-    }
-
     // When two complete maj/min triads coexist, offer a polychord alternate (e.g. "F|G").
     std::string polychordAlternate(const std::array<bool, 12>& pcs, Key spellKey)
     {
@@ -676,47 +650,12 @@ namespace
                    std::optional<Scale> scale, TriadQuality qualityHint = TriadQuality::Major,
                    bool hasQualityHint = false)
     {
+        juce::ignoreUnused(qualityHint, hasQualityHint);
         if (!scale.has_value() || chord.notes.empty())
             return;
 
-        const auto& keyScale = ChordDatabase::getInstance().get(spellKey, *scale);
-
-        // Prefer functional labels when they fire with enough confidence.
-        if (const auto sec = analyseSecondaryDominant(chord, keyScale);
-            sec.hit && sec.confidence >= kMinLabelConfidence)
-        {
-            result.romanNumeral = sec.label;
-            return;
-        }
-        if (const auto tri = analyseTritoneSubstitution(chord, keyScale);
-            tri.hit && tri.confidence >= kMinLabelConfidence)
-        {
-            result.romanNumeral = tri.label;
-            return;
-        }
-        if (const auto mix = analyseModeMixture(chord, keyScale);
-            mix.hit && mix.confidence >= kMinLabelConfidence)
-        {
-            result.romanNumeral = mix.label;
-            return;
-        }
-
-        auto roman = NextChordScorer::romanForChord(chord, keyScale);
-        if (roman.empty())
-            return;
-
-        // Append classical inversion figures for simple diatonic sonorities (I6, ii64, V65…).
-        const int root = NextChordScorer::rootPitchClass(chord);
-        const int bass = NextChordScorer::bassPitchClass(chord);
-        const auto q = hasQualityHint ? qualityHint : NextChordScorer::detectTriadQuality(chord);
-        const auto fig = inversionFigure(root, bass, q);
-        if (!fig.empty()
-            && roman.find('/') == std::string::npos
-            && roman.find('(') == std::string::npos)
-        {
-            roman += fig;
-        }
-        result.romanNumeral = std::move(roman);
+        // Shared path: diatonic + chromatic mixture (bVII, bVI, …) + secondary/subV.
+        result.romanNumeral = romanForChordInKeyScale(chord, spellKey, *scale);
     }
 
     float confidenceFromScores(int bestScore, int secondScore, int nHeld)

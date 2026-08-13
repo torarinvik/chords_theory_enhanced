@@ -238,7 +238,7 @@ void ScaleSuggestionPanel::regenerate()
     juce::String subtitle = juce::translate("scale_suggestion_current_prefix")
         + " " + theory::getKeyLabel(_key) + " " + currentLabel;
     if (_currentChord.has_value() && !_currentChord->readableName.empty())
-        subtitle += "  ·  " + juce::String(_currentChord->readableName);
+        subtitle += " - " + juce::String(_currentChord->readableName);
     _subtitle.setText(subtitle.toStdString());
 
     _listContent.rebuildRows(_suggestions);

@@ -9,7 +9,7 @@
 namespace theory
 {
 
-// "Am · ii" when a roman exists in key/scale; otherwise just the absolute name (readableName).
+// "Am - ii" when a roman exists in key/scale; otherwise just the absolute name (readableName).
 // Used by the progression chord lane when a scale is attached to a block.
 [[nodiscard]] std::string formatAbsoluteWithRoman(const Chord& chord, Key key, Scale scale,
                                                   const std::string& absoluteNameFallback = {});

@@ -120,6 +120,7 @@ private:
     void onButtonClick(const std::string& componentID) override;
 
     ChordResolver _chordResolver;
+    theory::Key _analysisKey = theory::Key::C;
     theory::Scale _currentScale = theory::Scale::Major;
 
     nelement::Text _presetsLabel { "progression-presets-label" };

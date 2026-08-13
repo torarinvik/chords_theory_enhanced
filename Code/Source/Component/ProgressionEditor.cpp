@@ -124,11 +124,14 @@ void ProgressionEditor::setScale(theory::Scale scale)
     _currentScale = scale;
     _presetPicker.refreshForScale(scale);
     _liveChordDisplay.setScale(scale);
+    _midiEditor.setAnalysisKeyAndScale(_analysisKey, scale);
 }
 
 void ProgressionEditor::setKey(theory::Key key)
 {
+    _analysisKey = key;
     _liveChordDisplay.setSpellKey(key);
+    _midiEditor.setAnalysisKeyAndScale(key, _currentScale);
 }
 
 void ProgressionEditor::setChordExpertContext(theory::ChordExpertContext context)

@@ -263,53 +263,31 @@ void LiveChordDisplay::paint(juce::Graphics& g)
         }
     }
 
-    if (showChord && bounds.getHeight() >= 26.f && bounds.getWidth() >= 120.f
-        && (!_qualityHint.empty() || !_romanHint.empty() || !_alternateHint.empty()))
+    if (!showChord)
     {
-        auto nameArea = bounds;
-        auto side = nameArea.removeFromRight(juce::jmin(96.f, bounds.getWidth() * 0.4f));
+        g.setFont(nui::Theme::newFont(nui::Theme::BOLD, nui::Theme::SMALL));
+        g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::DISABLED).asJuce());
+        g.drawText(text, bounds.reduced(8.f, 0.f), juce::Justification::centred, true);
+        return;
+    }
 
-        g.setFont(nui::Theme::newFont(nui::Theme::BOLD, nui::Theme::HEADING));
-        g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::TEXT).asJuce());
-        g.drawText(text, nameArea.reduced(6.f, 0.f), juce::Justification::centred, true);
+    // Always paint absolute name + roman inline (e.g. "Am - vi") so the function is obvious.
+    // Use ASCII separators only — the theme font mangles U+00B7 middle-dot into "Å".
+    auto content = bounds.reduced(8.f, 0.f);
+    g.setFont(nui::Theme::newFont(nui::Theme::BOLD, nui::Theme::HEADING));
+    g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::TEXT).asJuce());
 
-        auto top = side.removeFromTop(side.getHeight() * 0.55f);
-        auto bottom = side;
-        g.setFont(nui::Theme::newFont(nui::Theme::REGULAR, nui::Theme::SMALL));
-
-        if (!_romanHint.empty())
-        {
-            g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::ACCENT).asJuce());
-            g.drawText(juce::String(_romanHint), top.reduced(2.f, 0.f),
-                juce::Justification::centredRight, true);
-        }
-        else if (!_qualityHint.empty())
-        {
-            g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::ACCENT).asJuce().withAlpha(0.9f));
-            g.drawText(juce::String(_qualityHint), top.reduced(2.f, 0.f),
-                juce::Justification::centredRight, true);
-        }
-
-        if (!_alternateHint.empty() && _alternateHint != _displayedName)
-        {
-            g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::DISABLED).asJuce());
-            g.drawText(juce::String(_alternateHint), bottom.reduced(2.f, 0.f),
-                juce::Justification::centredRight, true);
-        }
-        else if (!_qualityHint.empty() && !_romanHint.empty())
-        {
-            g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::DISABLED).asJuce());
-            g.drawText(juce::String(_qualityHint), bottom.reduced(2.f, 0.f),
-                juce::Justification::centredRight, true);
-        }
+    if (!_romanHint.empty())
+    {
+        const auto nameW = content.getWidth() * 0.55f;
+        auto nameArea = content.removeFromLeft(nameW);
+        g.drawText(text, nameArea, juce::Justification::centredLeft, true);
+        g.setColour(nui::Theme::newColor(nui::Theme::ThemeColor::ACCENT).asJuce());
+        g.drawText("- " + juce::String(_romanHint), content, juce::Justification::centredLeft, true);
     }
     else
     {
-        g.setFont(nui::Theme::newFont(nui::Theme::BOLD, showChord ? nui::Theme::HEADING : nui::Theme::SMALL));
-        g.setColour(showChord
-            ? nui::Theme::newColor(nui::Theme::ThemeColor::TEXT).asJuce()
-            : nui::Theme::newColor(nui::Theme::ThemeColor::DISABLED).asJuce());
-        g.drawText(text, bounds.reduced(8.f, 0.f), juce::Justification::centred, true);
+        g.drawText(text, content, juce::Justification::centred, true);
     }
 }
 

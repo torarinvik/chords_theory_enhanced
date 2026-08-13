@@ -1079,6 +1079,52 @@ void MidiEditor::paintGridlines(juce::Graphics& g) const
     }
 }
 
+void MidiEditor::setAnalysisKeyAndScale(theory::Key key, theory::Scale scale)
+{
+    if (_analysisKey == key && _analysisScale == scale)
+        return;
+    _analysisKey = key;
+    _analysisScale = scale;
+    repaint();
+}
+
+theory::Chord MidiEditor::harmonyForChordBlock(const ChordBlockData& block) const
+{
+    if (!block.frozenChord.notes.empty())
+        return block.frozenChord;
+
+    // Reconstruct pitch classes from this block's notes (legacy / stripped frozen data).
+    theory::Chord chord;
+    chord.readableName = block.label;
+    chord.symbol = block.label;
+    std::array<bool, 12> seen {};
+    seen.fill(false);
+    int role = 1;
+    for (const auto& note : _notes)
+    {
+        if (note.sourceChordId != block.id)
+            continue;
+        const int pc = ((note.midiNote % 12) + 12) % 12;
+        if (seen[static_cast<std::size_t>(pc)])
+            continue;
+        seen[static_cast<std::size_t>(pc)] = true;
+        static constexpr const char* kNames[12] = {
+            "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
+        };
+        chord.notes.push_back(theory::NoteName { kNames[pc], kNames[pc], role });
+        role = role == 1 ? 3 : (role == 3 ? 5 : (role == 5 ? 7 : role + 1));
+    }
+    return chord;
+}
+
+std::string MidiEditor::chordBlockDisplayName(const ChordBlockData& block) const
+{
+    const auto harmony = harmonyForChordBlock(block);
+    const auto key = block.hasAttachedScale ? block.attachedScaleKey : _analysisKey;
+    const auto scale = block.hasAttachedScale ? block.attachedScale : _analysisScale;
+    return theory::formatAbsoluteWithRoman(harmony, key, scale, block.label);
+}
+
 void MidiEditor::paintChordLane(juce::Graphics& g) const
 {
     const auto laneTop = _contentArea.getBottom();
@@ -1112,35 +1158,48 @@ void MidiEditor::paintChordLane(juce::Graphics& g) const
 
         // Leave room on the right for the hover × so the label never sits under it.
         const auto showDelete = isHovered || isSelected;
-        auto labelBounds = bounds;
+        auto labelBounds = bounds.reduced(4.f, 0.f);
         if (showDelete)
             labelBounds.removeFromRight(kChordDeleteButtonSize + kChordDeleteButtonPad * 2.f);
 
+        // Absolute + roman always (session key/scale, or attached scale when present).
+        // Paint in two colours so the roman (e.g. "IV", "bVII") is easy to spot.
+        const auto harmony = harmonyForChordBlock(block);
+        const auto key = block.hasAttachedScale ? block.attachedScaleKey : _analysisKey;
+        const auto scale = block.hasAttachedScale ? block.attachedScale : _analysisScale;
+        const auto absolute = block.label;
+        const auto roman = theory::romanForChordInKeyScale(harmony, key, scale);
+
         if (block.hasAttachedScale)
         {
-            // Absolute name + roman in the attached scale (e.g. "Am · ii"), scale name on the right.
-            auto nameArea = labelBounds.reduced(4.f, 0.f);
-            auto scaleArea = nameArea.removeFromRight(juce::jmin(nameArea.getWidth() * 0.48f, 100.f));
-
-            const theory::Chord& harmony = !block.frozenChord.notes.empty()
-                ? block.frozenChord
-                : theory::Chord {};
-            const auto displayName = !harmony.notes.empty()
-                ? theory::formatAbsoluteWithRoman(harmony, block.attachedScaleKey, block.attachedScale, block.label)
-                : block.label;
-
-            g.setColour(textColour);
-            g.drawText(displayName, nameArea, juce::Justification::centredLeft, true);
-
+            // Compact scale tag on the far right; leave most width for "Am - ii".
+            auto scaleArea = labelBounds.removeFromRight(juce::jmin(72.f, labelBounds.getWidth() * 0.32f));
             const auto scaleText = theory::getKeyLabel(block.attachedScaleKey) + " "
                 + juce::translate(theory::getScaleTranslationKey(block.attachedScale)).toStdString();
             g.setColour(AppSettings::getInstance().getScaleHighlightColour());
+            g.setFont(nui::Theme::newFont(nui::Theme::REGULAR, nui::Theme::SMALL));
             g.drawText(scaleText, scaleArea, juce::Justification::centredRight, true);
+            labelBounds.removeFromRight(4.f);
+        }
+
+        g.setFont(nui::Theme::newFont(nui::Theme::REGULAR, nui::Theme::SMALL));
+        if (!roman.empty())
+        {
+            // "Am" + accent "- IV" (ASCII only — theme font mangles U+00B7 middle-dot into "Å").
+            // Split width roughly by glyph count (JUCE 8 Font has no getStringWidthFloat).
+            const auto absChars = static_cast<float>(juce::jmax(1, static_cast<int>(absolute.size())));
+            const auto romChars = static_cast<float>(juce::jmax(1, static_cast<int>(roman.size()) + 2));
+            const auto absWidth = labelBounds.getWidth() * (absChars / (absChars + romChars + 0.5f));
+            auto absArea = labelBounds.removeFromLeft(juce::jmax(28.f, absWidth));
+            g.setColour(textColour);
+            g.drawText(absolute, absArea, juce::Justification::centredLeft, true);
+            g.setColour(accent.brighter(0.15f));
+            g.drawText("- " + roman, labelBounds, juce::Justification::centredLeft, true);
         }
         else
         {
             g.setColour(textColour);
-            g.drawText(block.label, labelBounds.reduced(4.f, 0.f), juce::Justification::centred, true);
+            g.drawText(absolute, labelBounds, juce::Justification::centred, true);
         }
 
         if (showDelete)

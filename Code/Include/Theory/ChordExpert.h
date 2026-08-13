@@ -35,7 +35,7 @@ struct ChordExpertContext
 struct ChordExpertResult
 {
     ChordDetection detection;
-    std::string explanation;              // e.g. "V → I · resolution"
+    std::string explanation;              // e.g. "V -> I - resolution"
     std::vector<std::string> alternatives; // up to 3 other names (excl. primary)
     bool usedProgressionContext = false;
     bool usedStyleRewrite = false;

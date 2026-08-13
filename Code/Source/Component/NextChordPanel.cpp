@@ -367,7 +367,7 @@ void NextChordPanel::regenerate()
 
     juce::String currentText = juce::translate("next_chord_current_prefix") + " " + _currentChord->readableName;
     if (!_sequence.empty())
-        currentText += "  ·  " + juce::translate("next_chord_history_suffix")
+        currentText += " - " + juce::translate("next_chord_history_suffix")
             .replace("%n", juce::String(_sequence.size()));
     _currentLabel.setText(currentText.toStdString());
 
