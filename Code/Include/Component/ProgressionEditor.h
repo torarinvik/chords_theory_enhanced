@@ -117,10 +117,12 @@ private:
     void onChordFileDropped(double startBeat, const juce::String& filePath) override;
     void onContentChanged() override;
     void onPlaybackStateChanged(bool isPlaying) override;
+    void onRecordingStateChanged(bool isRecording) override;
     void onChordBlockPreviewRequested(const std::vector<int>& midiNotes) override;
     void onPresetSelected(const theory::ProgressionPreset& preset) override;
     void onProgressionDragStarted() override;
     void onButtonClick(const std::string& componentID) override;
+    void updateTransportColours();
 
     ChordResolver _chordResolver;
     theory::Key _analysisKey = theory::Key::C;
@@ -129,7 +131,7 @@ private:
     nelement::Text _presetsLabel { "progression-presets-label" };
     ProgressionPresetPicker _presetPicker;
     nelement::SVGButton _savePresetButton;
-    // Transport: play (toggle stop while running) | pause | record — record/pause are UI stubs for now.
+    // Transport: play (toggle stop while running) | pause | record (MIDI input → piano roll).
     nelement::SVGButton _playButton { "progression-play-button", nui::Icons::getPlay() };
     nelement::SVGButton _pauseButton { "progression-pause-button", nui::Icons::getPause() };
     nelement::SVGButton _recordButton { "progression-record-button", nui::Icons::getRecord() };

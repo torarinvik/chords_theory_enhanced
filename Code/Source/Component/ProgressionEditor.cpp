@@ -34,18 +34,15 @@ ProgressionEditor::ProgressionEditor(const std::string& identifier,
     _playButton.setIconSize(16.f);
     _playButton.addOnClickListener(this);
     _playButton.setHelpText(juce::translate("progression_play_tooltip").toStdString());
-    // Classic transport palette: green play, amber pause, red record/stop.
-    _playButton.setColour(juce::Colour(0xff2ecc71));
-
     _pauseButton.setIconSize(16.f);
     _pauseButton.addOnClickListener(this);
     _pauseButton.setHelpText(juce::translate("progression_pause_tooltip").toStdString());
-    _pauseButton.setColour(juce::Colour(0xfff1c40f));
 
     _recordButton.setIconSize(14.f);
     _recordButton.addOnClickListener(this);
     _recordButton.setHelpText(juce::translate("progression_record_tooltip").toStdString());
-    _recordButton.setColour(juce::Colour(0xffe74c3c));
+
+    updateTransportColours();
 
     _clearButton.setIconSize(14.f);
     _clearButton.addOnClickListener(this);
@@ -245,9 +242,34 @@ void ProgressionEditor::onPlaybackStateChanged(bool isPlaying)
     // Not the click handler's job to set this directly - it needs to stay correct even when
     // playback stops "from underneath" (e.g. clear()/restoreState() via a preset load), not just
     // in response to this button's own click.
-    _playButton.setIconBinary(isPlaying ? nui::Icons::getStop() : nui::Icons::getPlay());
-    // Stop uses record-red; idle play stays green.
-    _playButton.setColour(isPlaying ? juce::Colour(0xffe74c3c) : juce::Colour(0xff2ecc71));
+    juce::ignoreUnused(isPlaying);
+    updateTransportColours();
+}
+
+void ProgressionEditor::onRecordingStateChanged(bool isRecording)
+{
+    juce::ignoreUnused(isRecording);
+    updateTransportColours();
+}
+
+void ProgressionEditor::updateTransportColours()
+{
+    const bool playing = _midiEditor.isPlaying();
+    const bool recording = _midiEditor.isRecording();
+
+    _playButton.setIconBinary(playing ? nui::Icons::getStop() : nui::Icons::getPlay());
+    // Stop uses record-red while playing; idle play stays green.
+    _playButton.setColour(playing ? juce::Colour(0xffe74c3c) : juce::Colour(0xff2ecc71));
+
+    // Pause dimmed when nothing is moving; bright amber while transport runs.
+    _pauseButton.setColour(playing ? juce::Colour(0xfff1c40f) : juce::Colour(0xfff1c40f).withAlpha(0.45f));
+
+    // Record: solid red when armed, softer red when idle.
+    _recordButton.setColour(recording ? juce::Colour(0xffff2d2d) : juce::Colour(0xffe74c3c));
+    if (recording)
+        _recordButton.setBackgroundColour(juce::Colour(0xffe74c3c).withAlpha(0.25f));
+    else
+        _recordButton.resetBackgroundColour();
 }
 
 void ProgressionEditor::onPresetSelected(const theory::ProgressionPreset& preset)
@@ -266,16 +288,28 @@ void ProgressionEditor::onButtonClick(const std::string& componentID)
     if (componentID == _playButton.getComponentID())
     {
         if (_midiEditor.isPlaying())
+        {
+            // Play-as-stop also ends record so transport fully settles.
+            _midiEditor.stopRecording();
             _midiEditor.stopPlayback();
+        }
         else
             _midiEditor.startPlayback();
         return;
     }
 
-    // Pause / record: UI present; behaviour wired in a follow-up.
-    if (componentID == _pauseButton.getComponentID()
-        || componentID == _recordButton.getComponentID())
+    if (componentID == _pauseButton.getComponentID())
     {
+        _midiEditor.pausePlayback();
+        return;
+    }
+
+    if (componentID == _recordButton.getComponentID())
+    {
+        if (_midiEditor.isRecording())
+            _midiEditor.stopRecording();
+        else
+            _midiEditor.startRecording();
         return;
     }
 

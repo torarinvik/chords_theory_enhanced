@@ -1,6 +1,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "Audio/InputMidiNoteTracker.h"
 #include "Audio/ProgressionPlayer.h"
 #include "Component/MidiEditor.h"
 #include "Theory/ChordDatabase.h"
@@ -9,6 +10,7 @@
 #include "Theory/ProgressionSlot.h"
 #include "Theory/TriadLibrary.h"
 
+using audio::InputMidiNoteTracker;
 using audio::ProgressionPlayer;
 using component::MidiEditor;
 using theory::Chord;
@@ -608,6 +610,158 @@ TEST_CASE("MidiEditor::startPlayback on an empty editor is a no-op", "[MidiEdito
 
     CHECK_FALSE(editor.isPlaying());
     CHECK_FALSE(player.isPlaying());
+}
+
+TEST_CASE("MidiEditor::pausePlayback freezes transport without clearing the playhead", "[MidiEditor]")
+{
+    ProgressionPlayer player;
+    MidiEditor editor("test-midi-editor-pause", &player);
+    editor.setBounds(0, 0, 800, 400);
+    editor.addChordAtBeat(0.0, getTestChord(), testSlot(getTestChord()));
+
+    editor.startPlayback();
+    REQUIRE(editor.isPlaying());
+
+    player.seek(2.0);
+    editor.pausePlayback();
+
+    CHECK_FALSE(editor.isPlaying());
+    CHECK(editor.getPlayheadBeat() == Catch::Approx(2.0));
+
+    editor.startPlayback();
+    CHECK(editor.isPlaying());
+    CHECK(editor.getPlayheadBeat() == Catch::Approx(2.0));
+}
+
+TEST_CASE("MidiEditor: record captures MIDI input notes and multi-note slices as chords", "[MidiEditor]")
+{
+    ProgressionPlayer player;
+    InputMidiNoteTracker tracker;
+    MidiEditor editor("test-midi-editor-record", &player, &tracker);
+    editor.setBounds(0, 0, 800, 400);
+    editor.setAnalysisKeyAndScale(theory::Key::C, theory::Scale::Major);
+    editor.setBpm(120.0);
+
+    editor.startRecording();
+    REQUIRE(editor.isRecording());
+    REQUIRE(editor.isPlaying());
+
+    {
+        juce::MidiBuffer buffer;
+        buffer.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8) 100), 0);
+        buffer.addEvent(juce::MidiMessage::noteOn(1, 64, (juce::uint8) 100), 0);
+        buffer.addEvent(juce::MidiMessage::noteOn(1, 67, (juce::uint8) 100), 0);
+        tracker.processHostMidi(buffer);
+    }
+    editor.pollRecordingCapture();
+    CHECK(editor.getNoteCount() == 0);
+
+    player.seek(1.0);
+
+    {
+        juce::MidiBuffer buffer;
+        buffer.addEvent(juce::MidiMessage::noteOff(1, 60), 0);
+        buffer.addEvent(juce::MidiMessage::noteOff(1, 64), 0);
+        buffer.addEvent(juce::MidiMessage::noteOff(1, 67), 0);
+        tracker.processHostMidi(buffer);
+    }
+    editor.pollRecordingCapture();
+
+    REQUIRE(editor.getNoteCount() == 3);
+    REQUIRE(editor.getChordBlockCount() == 1);
+    // Chip sits on the gesture span (playhead was 0 → 1), not forced to a full bar.
+    CHECK(*editor.getChordBlockStartBeat(0) == Catch::Approx(0.0));
+    CHECK(*editor.getChordBlockLengthBeats(0) == Catch::Approx(1.0).margin(0.01));
+    CHECK(editor.getChordBlockDisplayLabel(0).find("C") != std::string::npos);
+
+    editor.stopRecording();
+    CHECK_FALSE(editor.isRecording());
+}
+
+TEST_CASE("MidiEditor: two recorded chords in the same bar do not stack", "[MidiEditor]")
+{
+    ProgressionPlayer player;
+    InputMidiNoteTracker tracker;
+    MidiEditor editor("test-midi-editor-record-overlap", &player, &tracker);
+    editor.setBounds(0, 0, 800, 400);
+    editor.setAnalysisKeyAndScale(theory::Key::C, theory::Scale::Major);
+
+    editor.startRecording();
+
+    // C major at beat 0 → 1
+    {
+        juce::MidiBuffer buffer;
+        buffer.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8) 100), 0);
+        buffer.addEvent(juce::MidiMessage::noteOn(1, 64, (juce::uint8) 100), 0);
+        buffer.addEvent(juce::MidiMessage::noteOn(1, 67, (juce::uint8) 100), 0);
+        tracker.processHostMidi(buffer);
+    }
+    editor.pollRecordingCapture();
+    player.seek(1.0);
+    {
+        juce::MidiBuffer buffer;
+        buffer.addEvent(juce::MidiMessage::noteOff(1, 60), 0);
+        buffer.addEvent(juce::MidiMessage::noteOff(1, 64), 0);
+        buffer.addEvent(juce::MidiMessage::noteOff(1, 67), 0);
+        tracker.processHostMidi(buffer);
+    }
+    editor.pollRecordingCapture();
+
+    // D minor at beat 1 → 2 (same bar as C if bar = 4 beats, both in bar 0)
+    {
+        juce::MidiBuffer buffer;
+        buffer.addEvent(juce::MidiMessage::noteOn(1, 62, (juce::uint8) 100), 0);
+        buffer.addEvent(juce::MidiMessage::noteOn(1, 65, (juce::uint8) 100), 0);
+        buffer.addEvent(juce::MidiMessage::noteOn(1, 69, (juce::uint8) 100), 0);
+        tracker.processHostMidi(buffer);
+    }
+    editor.pollRecordingCapture();
+    player.seek(2.0);
+    {
+        juce::MidiBuffer buffer;
+        buffer.addEvent(juce::MidiMessage::noteOff(1, 62), 0);
+        buffer.addEvent(juce::MidiMessage::noteOff(1, 65), 0);
+        buffer.addEvent(juce::MidiMessage::noteOff(1, 69), 0);
+        tracker.processHostMidi(buffer);
+    }
+    editor.pollRecordingCapture();
+
+    REQUIRE(editor.getChordBlockCount() == 2);
+    const auto s0 = *editor.getChordBlockStartBeat(0);
+    const auto e0 = s0 + *editor.getChordBlockLengthBeats(0);
+    const auto s1 = *editor.getChordBlockStartBeat(1);
+    const auto e1 = s1 + *editor.getChordBlockLengthBeats(1);
+
+    // Non-overlapping ranges (allow exact abutment).
+    CHECK((e0 <= s1 + 1.0e-6 || e1 <= s0 + 1.0e-6));
+    editor.stopRecording();
+}
+
+TEST_CASE("MidiEditor: single-note record does not create a chord block", "[MidiEditor]")
+{
+    ProgressionPlayer player;
+    InputMidiNoteTracker tracker;
+    MidiEditor editor("test-midi-editor-record-mono", &player, &tracker);
+    editor.setBounds(0, 0, 800, 400);
+
+    editor.startRecording();
+    {
+        juce::MidiBuffer buffer;
+        buffer.addEvent(juce::MidiMessage::noteOn(1, 62, (juce::uint8) 100), 0);
+        tracker.processHostMidi(buffer);
+    }
+    editor.pollRecordingCapture();
+    player.seek(0.5);
+    {
+        juce::MidiBuffer buffer;
+        buffer.addEvent(juce::MidiMessage::noteOff(1, 62), 0);
+        tracker.processHostMidi(buffer);
+    }
+    editor.pollRecordingCapture();
+
+    CHECK(editor.getNoteCount() == 1);
+    CHECK(editor.getChordBlockCount() == 0);
+    editor.stopRecording();
 }
 
 TEST_CASE("MidiEditor::onPlaybackStateChanged fires on start and stop", "[MidiEditor]")

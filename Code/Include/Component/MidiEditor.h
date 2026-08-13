@@ -1,7 +1,9 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <optional>
+#include <unordered_map>
 #include <vector>
 
 #include <nierika_dsp/nierika_dsp.h>
@@ -61,6 +63,9 @@ public:
         // the very notes a playing loop was referencing). Default no-op, same convention as
         // onContentChanged.
         virtual void onPlaybackStateChanged(bool isPlaying) { juce::ignoreUnused(isPlaying); }
+
+        // Fired when MIDI record arm turns on/off (user toggle or clear/restore).
+        virtual void onRecordingStateChanged(bool isRecording) { juce::ignoreUnused(isRecording); }
 
         // Click (not drag) on a chord-lane label - midiNotes are the live piano-roll notes still
         // tagged with that block's id (what the user currently sees for that chord), sorted
@@ -124,13 +129,25 @@ public:
     [[nodiscard]] theory::MidiEditorState getState() const;
     void restoreState(const theory::MidiEditorState& state);
 
-    // No-op if there's no progressionPlayer or no notes to play. Loop bounds are auto-computed
-    // from content (the bar containing the first note to the bar containing the last) unless the
-    // user has already manually resized the loop this "editing session" - see the loop-region
-    // members below.
+    // No-op if there's no progressionPlayer. Empty content is allowed while recording (playhead
+    // still advances). Loop bounds are auto-computed from content unless the user has manually
+    // resized the loop this "editing session" - see the loop-region members below.
     void startPlayback();
+    // Stops transport but keeps the playhead where it is (resume via startPlayback).
+    void pausePlayback();
     void stopPlayback();
     [[nodiscard]] bool isPlaying() const;
+
+    // MIDI input → piano roll. Arms record and starts transport if needed. Multi-note slices
+    // become full-bar chord-lane blocks (same system as chord drops). Toggle off finalizes open notes.
+    void startRecording();
+    void stopRecording();
+    [[nodiscard]] bool isRecording() const { return _isRecording; }
+
+    // One capture poll (also driven by the editor timer while armed). Public so unit tests can
+    // advance recording without a JUCE message-thread timer.
+    void pollRecordingCapture();
+
     [[nodiscard]] double getLoopStartBeat() const { return _loopStartBeat; }
     [[nodiscard]] double getLoopEndBeat() const { return _loopEndBeat; }
 
@@ -217,7 +234,15 @@ private:
 
     enum class DragMode { None, MoveNote, ResizeNoteStart, ResizeNoteEnd, MoveChordBlock, ResizeLoopStart, ResizeLoopEnd, SeekPlayhead };
 
-    void timerCallback() override; // drag auto-scroll, playhead repaint, live MIDI-input highlight
+    void timerCallback() override; // drag auto-scroll, playhead repaint, live MIDI-input highlight, record
+
+    // MIDI record capture helpers (message thread).
+    void finalizeOpenRecordNotes();
+    void commitRecordedSliceIfChord();
+    void ensureRecordingLoopCoversPlayhead();
+    void notifyRecordingStateChanged();
+    // Flush deferred content listeners once (after record stop / pause). Cheap no-op if clean.
+    void flushRecordingContentChanged();
 
     // paint helpers
     void paintGridlines(juce::Graphics&) const;
@@ -332,6 +357,15 @@ private:
     // Default key/scale for roman numerals on chord chips (block attached scale overrides).
     theory::Key _analysisKey = theory::Key::C;
     theory::Scale _analysisScale = theory::Scale::Major;
+
+    // MIDI record arm + open note-ons (midi note → start beat). Slice note indices fill while a
+    // continuous multi-note gesture is active; committed as a chord block when the gesture ends.
+    bool _isRecording = false;
+    bool _recordDirty = false; // true if notes were written since last session notify
+    std::uint32_t _lastRecordCaptureGeneration = 0;
+    std::unordered_map<int, double> _recordNoteOnBeats;
+    std::vector<int> _recordSliceNoteIndices; // indices into _notes for the current gesture
+    std::array<bool, 128> _recordPreviouslyHeld {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MidiEditor)
 };
