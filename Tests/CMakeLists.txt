@@ -3,6 +3,8 @@ add_executable(${PROJECT_NAME}_Tests
         PluginProcessorTests.cpp
         ChordDatabaseTests.cpp
         ChordDetectorTests.cpp
+        ChordDisplayTests.cpp
+        ChordExpertTests.cpp
         NoteConvertorTests.cpp
         ProgressionPresetTests.cpp
         MidiExporterTests.cpp

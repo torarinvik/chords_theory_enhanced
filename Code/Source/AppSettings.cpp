@@ -12,6 +12,7 @@ namespace
     const char* CHORD_HIGHLIGHT_COLOUR_KEY = "chordHighlightColour";
     const char* MIDI_INPUT_HIGHLIGHT_COLOUR_KEY = "midiInputHighlightColour";
     const char* MUTED_KEY = "outputMuted";
+    const char* CHORD_NAMING_STYLE_KEY = "chordNamingStyle";
 
     const char* THEME_MODE_LIGHT = "light";
     const char* THEME_MODE_DARK = "dark";
@@ -185,6 +186,19 @@ void AppSettings::setMuted(bool muted)
 bool AppSettings::isOutputMuted() noexcept
 {
     return outputMutedFlag().load(std::memory_order_relaxed);
+}
+
+theory::ChordNamingStyle AppSettings::getChordNamingStyle() const
+{
+    return theory::ChordExpert::parseStyle(
+        _properties.getValue(CHORD_NAMING_STYLE_KEY, "jazz").toStdString());
+}
+
+void AppSettings::setChordNamingStyle(theory::ChordNamingStyle style)
+{
+    _properties.setValue(CHORD_NAMING_STYLE_KEY, juce::String(theory::ChordExpert::styleKey(style)));
+    _properties.save();
+    getChangeBroadcaster().sendChangeMessage();
 }
 
 juce::ChangeBroadcaster& AppSettings::getChangeBroadcaster()

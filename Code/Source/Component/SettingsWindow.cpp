@@ -32,8 +32,8 @@ SettingsWindow::SettingsWindow(const std::string& identifier, nlayout::WindowsMa
     _layout.setFixedRowHeight(0, 42.f);
     // Visual: title + theme + 4 colour rows (note / chord / scale / MIDI input).
     _layout.setFixedRowHeight(1, 248.f);
-    // Audio: title + mute row.
-    _layout.setFixedRowHeight(2, 80.f);
+    // Audio: title + mute + naming-style rows.
+    _layout.setFixedRowHeight(2, 120.f);
     _layout.setFixedRowHeight(3, 90.f);
 
     _layout.addComponent(_title, 0, 0, 1, 1);
@@ -105,7 +105,7 @@ void SettingsWindow::resized()
 juce::Rectangle<int> SettingsWindow::getCardBounds()
 {
     constexpr int maxCardWidth = 650;
-    constexpr int maxCardHeight = 620;
+    constexpr int maxCardHeight = 660;
 
     const auto margin = juce::jmax(32, juce::jmin(getWidth(), getHeight()) / 8);
     const auto available = getLocalBounds().reduced(margin);

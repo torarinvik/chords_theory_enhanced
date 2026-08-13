@@ -86,6 +86,9 @@ private:
     // Pushes current key/scale/chord + search query/scope into the scale-suggestion panel.
     void refreshScaleSuggestions();
 
+    // Feeds progression timeline + last auditioned chords into the live chord expert.
+    void refreshLiveChordExpertContext();
+
     // Re-derives the voicing selector's arrow-target x from the currently open degree's card -
     // called after the layout changes for any reason (new degree opened, or a resize while
     // already open). No-op while the selector is closed.

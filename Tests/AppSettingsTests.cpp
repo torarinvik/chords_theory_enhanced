@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "AppSettings.h"
+#include "Theory/ChordExpert.h"
 
 namespace
 {
@@ -28,6 +29,7 @@ TEST_CASE("AppSettings returns sane defaults over a nonexistent file", "[AppSett
     CHECK(settings.getChordHighlightColour() == juce::Colour(0xFF3A607E));
     CHECK(settings.getMidiInputHighlightColour() == juce::Colour(0xFFE09B2D));
     CHECK(settings.getMuted() == false);
+    CHECK(settings.getChordNamingStyle() == theory::ChordNamingStyle::JazzChart);
 
     file.deleteFile();
 }
@@ -65,6 +67,11 @@ TEST_CASE("AppSettings round-trips each typed accessor", "[AppSettings]")
     CHECK(settings.getMuted() == true);
     settings.setMuted(false);
     CHECK(settings.getMuted() == false);
+
+    settings.setChordNamingStyle(theory::ChordNamingStyle::Classical);
+    CHECK(settings.getChordNamingStyle() == theory::ChordNamingStyle::Classical);
+    settings.setChordNamingStyle(theory::ChordNamingStyle::PopSlash);
+    CHECK(settings.getChordNamingStyle() == theory::ChordNamingStyle::PopSlash);
 
     file.deleteFile();
 }

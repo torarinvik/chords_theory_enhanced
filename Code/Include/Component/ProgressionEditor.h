@@ -12,6 +12,7 @@
 #include "Component/ProgressionDragHandle.h"
 #include "Component/ProgressionPresetPicker.h"
 #include "Theory/Chord.h"
+#include "Theory/ChordExpert.h"
 #include "Theory/Key.h"
 #include "Theory/MidiEditorState.h"
 #include "Theory/ProgressionPreset.h"
@@ -75,8 +76,11 @@ public:
     // note).
     void setScale(theory::Scale scale);
 
-    // Spelling context for the live chord detector (C# vs Db). Key alone; scale is unused here.
+    // Spelling + roman-numeral context for the live chord detector.
     void setKey(theory::Key key);
+
+    // Progression / audition history for the live chord expert (context-aware naming).
+    void setChordExpertContext(theory::ChordExpertContext context);
 
     // Clears the MidiEditor and places preset.slots[i]'s resolved chord at bar i, in order - an
     // unresolvable slot (e.g. a degree absent under the current scale) simply leaves its bar empty
@@ -116,6 +120,7 @@ private:
     void onButtonClick(const std::string& componentID) override;
 
     ChordResolver _chordResolver;
+    theory::Key _analysisKey = theory::Key::C;
     theory::Scale _currentScale = theory::Scale::Major;
 
     nelement::Text _presetsLabel { "progression-presets-label" };

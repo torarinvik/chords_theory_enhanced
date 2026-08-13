@@ -2119,35 +2119,35 @@ void NextChordScorer::score(const Chord& currentChord, const KeyScaleData& keySc
 
     // Directional gloss: only true resolutions after dominant instability; else departure labels.
     if (grammarTag)
-        reason << " · " << grammarTag;
+        reason << " - " << grammarTag;
     else if (resolveTag)
-        reason << " · " << resolveTag;
+        reason << " - " << resolveTag;
     else if (fromRole == HarmonicRole::Tonic && toRole == HarmonicRole::Predominant && !incomplete)
-        reason << " · predominant departure";
+        reason << " - predominant departure";
     else if (fromRole == HarmonicRole::Tonic && toRole == HarmonicRole::Dominant && !incomplete)
-        reason << " · dominant departure";
+        reason << " - dominant departure";
     else if (backdoor.tag)
-        reason << " · " << backdoor.tag;
+        reason << " - " << backdoor.tag;
     else if (sus.tag)
-        reason << " · " << sus.tag;
+        reason << " - " << sus.tag;
 
     // Only attach mediant when no stronger functional claim was used.
     if (!secondaryOk && !tritoneOk && mediant.hit && mediant.tag)
-        reason << " · " << mediant.tag;
+        reason << " - " << mediant.tag;
 
     if (fifthsChain <= -0.03f && grammarTag == nullptr && resolveTag == nullptr
         && (seqBias.tag == nullptr || std::string_view(seqBias.tag) != "5ths chain"))
-        reason << " · 5ths";
+        reason << " - 5ths";
 
     if (seqBias.tag != nullptr)
-        reason << " · " << seqBias.tag;
+        reason << " - " << seqBias.tag;
 
     // Inversion annotation only when the representative is not root position.
     if (bassTo != rootTo && !candidate.chord.notes.empty())
-        reason << " · /" << candidate.chord.notes.front().readableNote;
+        reason << " - /" << candidate.chord.notes.front().readableNote;
 
     if (const char* tag = qualityTag(toQuality))
-        reason << " · " << tag;
+        reason << " - " << tag;
 
     candidate.reasonLabel = reason.str();
 
@@ -2161,7 +2161,7 @@ void NextChordScorer::score(const Chord& currentChord, const KeyScaleData& keySc
         else
             safe << "chromatic";
         if (bassTo != rootTo)
-            safe << " · inversion";
+            safe << " - inversion";
         candidate.reasonLabel = safe.str();
     }
 }
