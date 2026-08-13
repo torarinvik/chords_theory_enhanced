@@ -34,15 +34,17 @@ ProgressionEditor::ProgressionEditor(const std::string& identifier,
     _playButton.setIconSize(16.f);
     _playButton.addOnClickListener(this);
     _playButton.setHelpText(juce::translate("progression_play_tooltip").toStdString());
+    // Classic transport palette: green play, amber pause, red record/stop.
+    _playButton.setColour(juce::Colour(0xff2ecc71));
 
     _pauseButton.setIconSize(16.f);
     _pauseButton.addOnClickListener(this);
     _pauseButton.setHelpText(juce::translate("progression_pause_tooltip").toStdString());
+    _pauseButton.setColour(juce::Colour(0xfff1c40f));
 
     _recordButton.setIconSize(14.f);
     _recordButton.addOnClickListener(this);
     _recordButton.setHelpText(juce::translate("progression_record_tooltip").toStdString());
-    // Classic transport red for record (visual only until arm/record is wired).
     _recordButton.setColour(juce::Colour(0xffe74c3c));
 
     _clearButton.setIconSize(14.f);
@@ -244,6 +246,8 @@ void ProgressionEditor::onPlaybackStateChanged(bool isPlaying)
     // playback stops "from underneath" (e.g. clear()/restoreState() via a preset load), not just
     // in response to this button's own click.
     _playButton.setIconBinary(isPlaying ? nui::Icons::getStop() : nui::Icons::getPlay());
+    // Stop uses record-red; idle play stays green.
+    _playButton.setColour(isPlaying ? juce::Colour(0xffe74c3c) : juce::Colour(0xff2ecc71));
 }
 
 void ProgressionEditor::onPresetSelected(const theory::ProgressionPreset& preset)
