@@ -86,8 +86,12 @@ public:
     void resized() override;
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
 
-    // Session key/scale for chord-lane roman numerals (overridden per block when a scale is attached).
+    // Session key/scale kept in sync with the key/scale pickers (used as fallback analysis context).
+    // Chord-lane roman numerals only appear when a scale is attached to that block.
     void setAnalysisKeyAndScale(theory::Key key, theory::Scale scale);
+
+    // Absolute name, or "Am - ii" when that block has an attached scale with a computable roman.
+    [[nodiscard]] std::string getChordBlockDisplayLabel(int index) const;
 
     // Snaps to the whole-bar (4-beat) cell startBeat falls in, then splits chord into N note
     // blocks (via theory::NoteConvertor::voiceChordCloseToMiddleC) plus one chord-lane block
@@ -218,7 +222,7 @@ private:
     // paint helpers
     void paintGridlines(juce::Graphics&) const;
     void paintChordLane(juce::Graphics&) const;
-    // Absolute name + roman for a block (uses attached scale when set, else analysis key/scale).
+    // Absolute name only, unless the block has an attached scale — then "Am - ii" vs that scale.
     [[nodiscard]] std::string chordBlockDisplayName(const ChordBlockData& block) const;
     [[nodiscard]] theory::Chord harmonyForChordBlock(const ChordBlockData& block) const;
     void paintNotes(juce::Graphics&) const;

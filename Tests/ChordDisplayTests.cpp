@@ -44,6 +44,14 @@ TEST_CASE("formatAbsoluteWithRoman: attached-scale style Dorian example", "[Chor
     CHECK(label.find(" - ") != std::string::npos);
 }
 
+TEST_CASE("formatAbsoluteWithRoman: C major under attached A minor is C - III", "[ChordDisplay]")
+{
+    // Timeline chip with A Minor attached: C functions as III.
+    const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C, 0);
+    CHECK(romanForChordInKeyScale(c, Key::A, Scale::Minor) == "III");
+    CHECK(formatAbsoluteWithRoman(c, Key::A, Scale::Minor, "C") == "C - III");
+}
+
 TEST_CASE("formatAbsoluteWithRoman: fallback name when chord notes empty", "[ChordDisplay]")
 {
     theory::Chord empty;

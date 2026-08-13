@@ -80,10 +80,8 @@ void LiveChordDisplay::setKeyAndScale(theory::Key key, theory::Scale scale)
 
 void LiveChordDisplay::setExpertContext(theory::ChordExpertContext context)
 {
-    // Preserve key/scale already set from pickers if caller only updates history/style.
-    context.key = _context.key;
-    context.scale = _context.scale;
-    // Style always comes from settings (authoritative).
+    // Trust the caller's key/scale (AppLayout seeds session pickers, then overrides with any
+    // scale attached to the active progression chord). Only style is forced from settings.
     context.style = AppSettings::getInstance().getChordNamingStyle();
     _context = std::move(context);
     refreshFromTracker(true);
