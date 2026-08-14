@@ -67,12 +67,17 @@ public:
         // Fired when MIDI record arm turns on/off (user toggle or clear/restore).
         virtual void onRecordingStateChanged(bool isRecording) { juce::ignoreUnused(isRecording); }
 
-        // Click (not drag) on a chord-lane label - midiNotes are the live piano-roll notes still
-        // tagged with that block's id (what the user currently sees for that chord), sorted
-        // ascending. Empty when every note was individually deleted. Default no-op.
-        virtual void onChordBlockPreviewRequested(const std::vector<int>& midiNotes)
+        // Click (not drag) on a chord-lane label.
+        //  - midiNotes: live piano-roll notes still tagged with that block (sorted ascending);
+        //    empty when every note was individually deleted.
+        //  - chord: frozen drop-time harmony for that block (preferred for next-chord suggestions).
+        //  - blockId: stable MidiEditor chord-block id (for phrase memory before this block).
+        // Default no-op.
+        virtual void onChordBlockPreviewRequested(const std::vector<int>& midiNotes,
+                                                  const theory::Chord& chord,
+                                                  int blockId)
         {
-            juce::ignoreUnused(midiNotes);
+            juce::ignoreUnused(midiNotes, chord, blockId);
         }
     };
 

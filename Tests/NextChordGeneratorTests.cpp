@@ -29,6 +29,7 @@ using theory::SequenceEvent;
 using theory::TriadLibrary;
 using theory::TriadQuality;
 using theory::buildSequenceContext;
+using theory::buildSequenceContextBeforeBlock;
 
 namespace
 {
@@ -760,6 +761,15 @@ TEST_CASE("buildSequenceContext: history is strictly before current, never later
     // Browser pin of G (not on roll): full timeline is history.
     auto pinG = buildSequenceContext(state, keyScale, &g);
     REQUIRE(pinG.size() == 2);
+
+    // Explicit block id (first C): no history before it.
+    auto beforeBlock0 = buildSequenceContextBeforeBlock(state, keyScale, 0);
+    REQUIRE(beforeBlock0.size() == 0);
+
+    // Explicit block id (Em): history is only C, even if another C appeared later.
+    auto beforeBlock1 = buildSequenceContextBeforeBlock(state, keyScale, 1);
+    REQUIRE(beforeBlock1.size() == 1);
+    CHECK(pitchClasses(beforeBlock1.previous[0].chord) == pitchClasses(c));
 }
 
 TEST_CASE("NextChordGenerator: top results are distinct harmonic families, not inversion floods", "[NextChord]")

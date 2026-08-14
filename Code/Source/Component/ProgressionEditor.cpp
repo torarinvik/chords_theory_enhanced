@@ -231,10 +231,12 @@ void ProgressionEditor::onContentChanged()
         listener->onContentChanged();
 }
 
-void ProgressionEditor::onChordBlockPreviewRequested(const std::vector<int>& midiNotes)
+void ProgressionEditor::onChordBlockPreviewRequested(const std::vector<int>& midiNotes,
+                                                     const theory::Chord& chord,
+                                                     int blockId)
 {
     for (auto* listener : _listeners)
-        listener->onChordBlockPreviewRequested(midiNotes);
+        listener->onChordBlockPreviewRequested(midiNotes, chord, blockId);
 }
 
 void ProgressionEditor::onPlaybackStateChanged(bool isPlaying)

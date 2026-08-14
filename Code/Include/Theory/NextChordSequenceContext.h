@@ -66,6 +66,12 @@ SequenceContext buildSequenceContext(const MidiEditorState& state,
                                      const KeyScaleData& keyScale,
                                      const Chord* currentChord = nullptr);
 
+// Phrase memory strictly before the chord block with `blockId` (timeline order by startBeat).
+// Empty when the id is missing or is the first event.
+SequenceContext buildSequenceContextBeforeBlock(const MidiEditorState& state,
+                                                const KeyScaleData& keyScale,
+                                                int blockId);
+
 // Convenience: previous = everything before the last timeline chord.
 SequenceContext buildSequenceContextBeforeLast(const MidiEditorState& state,
                                                const KeyScaleData& keyScale);

@@ -50,7 +50,9 @@ private:
     void onChordFileDropped(double startBeat, const juce::String& filePath) override;
     void onProgressionDragStarted() override;
     void onContentChanged() override;
-    void onChordBlockPreviewRequested(const std::vector<int>& midiNotes) override;
+    void onChordBlockPreviewRequested(const std::vector<int>& midiNotes,
+                                      const theory::Chord& chord,
+                                      int blockId) override;
 
     // _mainSection's own panel-switch mechanism (GridLayout::setVisible()) unconditionally shows
     // every component registered in a panel the moment it becomes active again - including
@@ -71,7 +73,10 @@ private:
 
     // Updates the next-chord panel from a newly chosen "current" chord (and rebuilds sequence memory).
     // When pinCurrent is true, progression edits will not auto-retarget current to the last block.
-    void setCurrentChordForSuggestions(const theory::Chord& chord, bool pinCurrent = true);
+    // When timelineBlockId >= 0, phrase memory is everything strictly before that block (lane click).
+    void setCurrentChordForSuggestions(const theory::Chord& chord,
+                                       bool pinCurrent = true,
+                                       int timelineBlockId = -1);
 
     // Follows the progression timeline: current = last chord block, history = everything before it.
     // Clears any browser pin. No-op if the progression is empty.
