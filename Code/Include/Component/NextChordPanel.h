@@ -10,6 +10,7 @@
 #include "Theory/Chord.h"
 #include "Theory/Key.h"
 #include "Theory/NextChordCandidate.h"
+#include "Theory/NextChordGenerator.h"
 #include "Theory/NextChordSequenceContext.h"
 #include "Theory/Scale.h"
 
@@ -46,6 +47,9 @@ public:
     void setSequenceContext(theory::SequenceContext sequence);
     // Atomically update current chord + sequence memory (one regenerate).
     void setCurrentChord(const theory::Chord& chord, theory::SequenceContext sequence);
+    // Header search: query filters the list; All = full catalogue, Predicted = suggestion pool.
+    void setSearchQuery(const std::string& query);
+    void setSearchScope(theory::NextChordGenerator::Pool pool);
     void clear();
 
     void setDrama01(float drama01);
@@ -119,6 +123,8 @@ private:
     theory::Scale _scale = theory::Scale::Major;
     std::optional<theory::Chord> _currentChord;
     theory::SequenceContext _sequence;
+    std::string _searchQuery;
+    theory::NextChordGenerator::Pool _searchPool = theory::NextChordGenerator::Pool::All;
     std::vector<theory::NextChordCandidate> _theoryCandidates;
     std::vector<theory::NextChordCandidate> _aiCandidates;
     float _drama01 = 0.35f;

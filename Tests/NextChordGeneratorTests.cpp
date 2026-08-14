@@ -1,8 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <optional>
 #include <set>
+#include <string>
 
 #include "Theory/ChordDatabase.h"
 #include "Theory/MidiEditorState.h"
@@ -770,6 +772,55 @@ TEST_CASE("buildSequenceContext: history is strictly before current, never later
     auto beforeBlock1 = buildSequenceContextBeforeBlock(state, keyScale, 1);
     REQUIRE(beforeBlock1.size() == 1);
     CHECK(pitchClasses(beforeBlock1.previous[0].chord) == pitchClasses(c));
+}
+
+TEST_CASE("NextChordGenerator: Predicted query filters suggestions; All searches the catalogue", "[NextChord]")
+{
+    const auto& keyScale = ChordDatabase::getInstance().get(Key::C, Scale::Major);
+    const auto c = TriadLibrary::makeTriad(0, TriadQuality::Major, Key::C);
+
+    auto containsIgnoreCase = [](const std::string& hay, const std::string& needle)
+    {
+        auto lower = [](std::string s)
+        {
+            std::transform(s.begin(), s.end(), s.begin(),
+                [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            return s;
+        };
+        return lower(hay).find(lower(needle)) != std::string::npos;
+    };
+
+    const auto predicted = NextChordGenerator::generate(
+        c, keyScale, 0.35f, {}, NextChordGenerator::Pool::Predicted, "");
+    REQUIRE_FALSE(predicted.empty());
+
+    const auto predictedG = NextChordGenerator::generate(
+        c, keyScale, 0.35f, {}, NextChordGenerator::Pool::Predicted, "G");
+    REQUIRE_FALSE(predictedG.empty());
+    for (const auto& cand : predictedG)
+        CHECK((containsIgnoreCase(cand.chord.readableName, "g")
+            || containsIgnoreCase(cand.chord.symbol, "g")));
+    // Filtering must not invent rows outside the predicted pool.
+    CHECK(predictedG.size() <= predicted.size());
+
+    const auto allDm = NextChordGenerator::generate(
+        c, keyScale, 0.35f, {}, NextChordGenerator::Pool::All, "Dm");
+    REQUIRE_FALSE(allDm.empty());
+    bool sawDm = false;
+    for (const auto& cand : allDm)
+    {
+        if (containsIgnoreCase(cand.chord.readableName, "Dm")
+            || containsIgnoreCase(cand.chord.symbol, "Dm"))
+            sawDm = true;
+    }
+    CHECK(sawDm);
+
+    // Catalogue browse with no current chord.
+    const auto catalogue = NextChordGenerator::generateCatalogue(keyScale, "Am7");
+    REQUIRE_FALSE(catalogue.empty());
+    for (const auto& cand : catalogue)
+        CHECK((containsIgnoreCase(cand.chord.readableName, "am")
+            || containsIgnoreCase(cand.chord.symbol, "am")));
 }
 
 TEST_CASE("NextChordGenerator: top results are distinct harmonic families, not inversion floods", "[NextChord]")

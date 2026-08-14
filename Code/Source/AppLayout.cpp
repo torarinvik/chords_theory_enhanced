@@ -7,6 +7,7 @@
 #include "Theory/ChordDatabase.h"
 #include "Theory/ChordExpert.h"
 #include "Theory/MidiExporter.h"
+#include "Theory/NextChordGenerator.h"
 #include "Theory/NextChordSequenceContext.h"
 #include "Theory/NoteConvertor.h"
 #include "Theory/NoteName.h"
@@ -117,6 +118,12 @@ AppLayout::AppLayout(ndsp::ParameterManager& parameterManager, PluginAudioProces
     _mainSection.getLayout().addComponent(_progressionEditor, 4, 1, 7, 1);
 
     updateSuggestionPanelVisibility();
+    // Seed search query/scope so Chord All/Predicted matches the header toggle on first paint.
+    _nextChordPanel.setSearchQuery(_keyScaleSelector.getSearchQuery());
+    _nextChordPanel.setSearchScope(
+        _keyScaleSelector.getSearchScope() == component::KeyScaleSelector::SearchScope::All
+            ? theory::NextChordGenerator::Pool::All
+            : theory::NextChordGenerator::Pool::Predicted);
     refreshScaleSuggestions();
 
     // Drag handles between browser|next-chords and next-chords|progression. Both adjacent rows
@@ -253,11 +260,18 @@ void AppLayout::onSearchChanged(const std::string& query,
                                 component::KeyScaleSelector::SearchMode mode,
                                 component::KeyScaleSelector::SearchScope scope)
 {
-    juce::ignoreUnused(query, mode, scope);
+    juce::ignoreUnused(mode);
 
     updateSuggestionPanelVisibility();
-    // Mode / scope / query changes re-pull key, scale, and the current chord so Scale mode
-    // never keeps a stale ranking after the chord context moved under Chord mode.
+
+    // Chord mode: All = full catalogue search; off = filter the current next-chord suggestions.
+    _nextChordPanel.setSearchQuery(query);
+    _nextChordPanel.setSearchScope(
+        scope == component::KeyScaleSelector::SearchScope::All
+            ? theory::NextChordGenerator::Pool::All
+            : theory::NextChordGenerator::Pool::Predicted);
+
+    // Scale mode: same All/Predicted semantics for the scale-suggestion list.
     refreshScaleSuggestions();
 }
 
