@@ -49,8 +49,9 @@ clone with `--recurse-submodules` or run `git submodule update --init --recursiv
   `startBeat`/`lengthBeats` position (beats → ticks via `kTicksPerQuarterNote`, no quantization) -
   this is what "Drag it out" actually uses, so the exported MIDI matches the piano roll exactly.
 - `Audio::ChordSynthEngine`/`Audio::ProgressionPlayer` — the actual synth. `ChordSynthEngine` bridges
-  UI-thread "preview this chord" clicks into the audio-thread `juce::Synthesiser` via
-  `juce::MidiKeyboardState`. `ProgressionPlayer` (owned by it) is the sample-accurate loop-playback
+  UI-thread "preview this chord" clicks through a fixed-capacity pending command and inserts their
+  note events directly into the current audio block before the audio-thread `juce::Synthesiser`.
+  `ProgressionPlayer` (owned by it) is the sample-accurate loop-playback
   scheduler behind `MidiEditor`'s play/pause button - injects real note-on/off `juce::MidiMessage`s
   directly into the same block `ChordSynthEngine::renderNextBlock` renders, at the exact sample
   offset each note falls on (host tempo when available, `kFallbackBpm` otherwise). Message thread

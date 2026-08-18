@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <atomic>
 #include <vector>
 
 #include <juce_audio_basics/juce_audio_basics.h> // includes juce::AudioPlayHead
@@ -16,12 +18,11 @@ namespace audio
 {
 
 // Owns the polyphonic synth and bridges UI-thread "preview this chord" clicks into the
-// audio-thread Synthesiser via juce::MidiKeyboardState - JUCE's standard, safety-appropriate
-// pattern for this exact cross-thread scenario (its critical sections only ever do trivial
-// bitmask/MidiBuffer::addEvent work, unlike Synthesiser::noteOn/noteOff, which lock around an
-// entire buffer's render). previewChord() plays a fixed-duration audition (~1s) rather than
-// tracking press-and-hold, since the UI's drag-to-export gesture can block mouse-up delivery -
-// see ChordCard.
+// audio-thread Synthesiser through a fixed-capacity pending command. Preview events are inserted
+// directly into the current audio block, alongside host MIDI and progression events, so a click
+// cannot be lost in a timestamped message-thread queue. previewChord() plays a fixed-duration
+// audition (~1s) rather than tracking press-and-hold, since the UI's drag-to-export gesture can
+// block mouse-up delivery - see ChordCard.
 class ChordSynthEngine : private juce::Timer
 {
 public:
@@ -70,12 +71,14 @@ public:
 
 private:
     void timerCallback() override;
-    void releaseActiveNotes();
+    void queuePreview(const std::vector<int>& midiNotes);
+    void renderPendingPreview(juce::MidiBuffer& midiMessages, int startSample, int numSamples);
     void advanceFreeLfoPhase(int numSamples);
 
     static constexpr int kMidiChannel = 1;
     static constexpr float kPreviewVelocity = 0.9f;
     static constexpr int kPreviewDurationMs = 1000;
+    static constexpr int kMaxPreviewNotes = 16;
     static constexpr int kNumVoices = 16;
     // Matches Theory::MidiExporter::kFallbackBpm's precedent (Audio doesn't depend on Theory, so
     // this is its own constant rather than a cross-layer include).
@@ -86,11 +89,25 @@ private:
     // destruction order is the reverse of declaration order).
     VoiceSharedState _sharedState;
     juce::Synthesiser _synth;
-    juce::MidiKeyboardState _keyboardState;
-    std::vector<int> _activeNotes;
     double _sampleRate = 44100.0;
     ProgressionPlayer _progressionPlayer;
     InputMidiNoteTracker _inputMidiNoteTracker;
+
+    struct PreviewCommand
+    {
+        std::array<int, kMaxPreviewNotes> notes {};
+        int count = 0;
+    };
+
+    // Message thread writes the inactive command, then publishes its index. The audio thread
+    // consumes the published command once per block; no lock or allocation is needed in either
+    // the UI preview call or the render callback.
+    PreviewCommand _previewCommands[2];
+    std::atomic<int> _previewCommandIndex { 0 };
+    int _lastRenderedPreviewCommand = 0;
+    std::array<int, kMaxPreviewNotes> _activePreviewNotes {};
+    int _activePreviewCount = 0;
+    int _previewSamplesUntilOff = 0;
 
     MasterBusState _masterBusState;
     MasterBus _masterBus;

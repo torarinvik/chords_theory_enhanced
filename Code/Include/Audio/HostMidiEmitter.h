@@ -10,7 +10,7 @@ namespace audio
 
 // UI-thread → audio-thread bridge that injects note-on/off into the host-bound MidiBuffer so a
 // DAW can route this plugin's MIDI output to another track. Separate from ChordSynthEngine's
-// preview path (which uses MidiKeyboardState for the internal synth only).
+// preview path (which is rendered directly by ChordSynthEngine for the internal synth).
 //
 // Contract:
 //  - playChord() / allNotesOff() message thread only

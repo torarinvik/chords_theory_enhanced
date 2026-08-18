@@ -57,8 +57,9 @@ void ChordSynthEngine::renderNextBlock(juce::AudioBuffer<float>& buffer, juce::M
     // voice re-seeds its own per-sample-stepped copy from this value at the top of every block).
     advanceFreeLfoPhase(numSamples);
 
-    // Host MIDI is already in midiMessages; this also injects UI preview notes. Synth plays both.
-    _keyboardState.processNextMidiBuffer(midiMessages, startSample, numSamples, true);
+    // Host MIDI and progression events are already in midiMessages. Add UI preview events to the
+    // same block so the Synthesiser sees every source through one deterministic path.
+    renderPendingPreview(midiMessages, startSample, numSamples);
     _synth.renderNextBlock(buffer, midiMessages, startSample, numSamples);
 
     // A non-owning view over exactly the [startSample, startSample+numSamples) range that was
@@ -83,15 +84,7 @@ void ChordSynthEngine::renderNextBlock(juce::AudioBuffer<float>& buffer, juce::M
 
 void ChordSynthEngine::previewChord(const std::vector<int>& midiNotes)
 {
-    releaseActiveNotes();
-
-    if (midiNotes.empty())
-        return;
-
-    _activeNotes = midiNotes;
-
-    for (const int note : _activeNotes)
-        _keyboardState.noteOn(kMidiChannel, note, kPreviewVelocity);
+    queuePreview(midiNotes);
 
     startTimer(kPreviewDurationMs);
 }
@@ -99,23 +92,77 @@ void ChordSynthEngine::previewChord(const std::vector<int>& midiNotes)
 void ChordSynthEngine::reset()
 {
     stopTimer();
-    releaseActiveNotes();
+    queuePreview({});
     _progressionPlayer.stop();
     _inputMidiNoteTracker.clear();
 }
 
 void ChordSynthEngine::timerCallback()
 {
-    releaseActiveNotes();
+    queuePreview({});
     stopTimer();
 }
 
-void ChordSynthEngine::releaseActiveNotes()
+void ChordSynthEngine::queuePreview(const std::vector<int>& midiNotes)
 {
-    for (const int note : _activeNotes)
-        _keyboardState.noteOff(kMidiChannel, note, 0.0f);
+    const auto activeIndex = _previewCommandIndex.load(std::memory_order_relaxed);
+    const auto inactiveIndex = 1 - activeIndex;
+    auto& command = _previewCommands[inactiveIndex];
+    command.count = 0;
 
-    _activeNotes.clear();
+    for (const int note : midiNotes)
+    {
+        if (command.count >= kMaxPreviewNotes)
+            break;
+        if (note < 0 || note > 127)
+            continue;
+        command.notes[static_cast<std::size_t>(command.count++)] = note;
+    }
+
+    _previewCommandIndex.store(inactiveIndex, std::memory_order_release);
+}
+
+void ChordSynthEngine::renderPendingPreview(juce::MidiBuffer& midiMessages, int startSample, int numSamples)
+{
+    const auto commandIndex = _previewCommandIndex.load(std::memory_order_acquire);
+    if (commandIndex != _lastRenderedPreviewCommand)
+    {
+        for (int i = 0; i < _activePreviewCount; ++i)
+            midiMessages.addEvent(juce::MidiMessage::noteOff(kMidiChannel, _activePreviewNotes[static_cast<std::size_t>(i)]), startSample);
+
+        _activePreviewCount = 0;
+        _previewSamplesUntilOff = 0;
+
+        const auto& command = _previewCommands[static_cast<std::size_t>(commandIndex)];
+        for (int i = 0; i < command.count; ++i)
+        {
+            const auto note = command.notes[static_cast<std::size_t>(i)];
+            _activePreviewNotes[static_cast<std::size_t>(_activePreviewCount++)] = note;
+            midiMessages.addEvent(juce::MidiMessage::noteOn(kMidiChannel, note, kPreviewVelocity), startSample);
+        }
+
+        if (_activePreviewCount > 0)
+            _previewSamplesUntilOff = juce::jmax(1, static_cast<int>(std::round(
+                (_sampleRate * static_cast<double>(kPreviewDurationMs)) / 1000.0)));
+
+        _lastRenderedPreviewCommand = commandIndex;
+    }
+
+    if (_activePreviewCount == 0 || numSamples <= 0)
+        return;
+
+    if (_previewSamplesUntilOff <= numSamples)
+    {
+        const auto offset = juce::jmax(0, _previewSamplesUntilOff - 1);
+        for (int i = 0; i < _activePreviewCount; ++i)
+            midiMessages.addEvent(juce::MidiMessage::noteOff(kMidiChannel, _activePreviewNotes[static_cast<std::size_t>(i)]), startSample + offset);
+        _activePreviewCount = 0;
+        _previewSamplesUntilOff = 0;
+    }
+    else
+    {
+        _previewSamplesUntilOff -= numSamples;
+    }
 }
 
 void ChordSynthEngine::advanceFreeLfoPhase(int numSamples)
