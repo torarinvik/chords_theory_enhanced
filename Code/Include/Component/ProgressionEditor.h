@@ -53,9 +53,11 @@ public:
         // needing a separate hook per mutation path. Mirrors MidiEditor::Listener::onContentChanged.
         virtual void onContentChanged() = 0;
 
-        // Click on a chord-lane label in the MidiEditor - bubbles the live MIDI notes for that
-        // block so the owner can audition them (synth + host MIDI). Pure bubble-up.
-        virtual void onChordBlockPreviewRequested(const std::vector<int>& midiNotes) = 0;
+        // Click on a chord-lane label in the MidiEditor - bubbles live notes, frozen chord, and
+        // block id so the owner can audition and retarget next-chord suggestions. Pure bubble-up.
+        virtual void onChordBlockPreviewRequested(const std::vector<int>& midiNotes,
+                                                  const theory::Chord& chord,
+                                                  int blockId) = 0;
     };
 
     // progressionPlayer / inputMidiNoteTracker are nullable (tests may omit them) - forwarded
@@ -118,7 +120,9 @@ private:
     void onContentChanged() override;
     void onPlaybackStateChanged(bool isPlaying) override;
     void onRecordingStateChanged(bool isRecording) override;
-    void onChordBlockPreviewRequested(const std::vector<int>& midiNotes) override;
+    void onChordBlockPreviewRequested(const std::vector<int>& midiNotes,
+                                      const theory::Chord& chord,
+                                      int blockId) override;
     void onPresetSelected(const theory::ProgressionPreset& preset) override;
     void onProgressionDragStarted() override;
     void onButtonClick(const std::string& componentID) override;

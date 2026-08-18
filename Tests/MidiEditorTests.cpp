@@ -69,6 +69,8 @@ namespace
         bool lastPlaybackState = false;
         int chordPreviewCount = 0;
         std::vector<int> lastPreviewNotes;
+        theory::Chord lastPreviewChord;
+        int lastPreviewBlockId = -1;
 
         void onChordFileDropped(double startBeat, const juce::String&) override
         {
@@ -84,10 +86,14 @@ namespace
             lastPlaybackState = isPlaying;
         }
 
-        void onChordBlockPreviewRequested(const std::vector<int>& midiNotes) override
+        void onChordBlockPreviewRequested(const std::vector<int>& midiNotes,
+                                          const theory::Chord& chord,
+                                          int blockId) override
         {
             ++chordPreviewCount;
             lastPreviewNotes = midiNotes;
+            lastPreviewChord = chord;
+            lastPreviewBlockId = blockId;
         }
     };
 
@@ -336,6 +342,8 @@ TEST_CASE("MidiEditor: clicking a chord-lane label previews its notes without mo
     REQUIRE(listener.lastPreviewNotes.size() == expectedNotes.size());
     for (std::size_t i = 0; i < expectedNotes.size(); ++i)
         CHECK(listener.lastPreviewNotes[i] == expectedNotes[i]);
+    CHECK(listener.lastPreviewChord.readableName == chord.readableName);
+    CHECK(listener.lastPreviewBlockId >= 0);
 
     // Pure click must not move the block or fire another content-changed.
     REQUIRE(*editor.getChordBlockStartBeat(0) == Catch::Approx(0.0));

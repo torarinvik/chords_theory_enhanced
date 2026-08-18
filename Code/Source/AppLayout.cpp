@@ -7,6 +7,7 @@
 #include "Theory/ChordDatabase.h"
 #include "Theory/ChordExpert.h"
 #include "Theory/MidiExporter.h"
+#include "Theory/NextChordGenerator.h"
 #include "Theory/NextChordSequenceContext.h"
 #include "Theory/NoteConvertor.h"
 #include "Theory/NoteName.h"
@@ -117,6 +118,12 @@ AppLayout::AppLayout(ndsp::ParameterManager& parameterManager, PluginAudioProces
     _mainSection.getLayout().addComponent(_progressionEditor, 4, 1, 7, 1);
 
     updateSuggestionPanelVisibility();
+    // Seed search query/scope so Chord All/Predicted matches the header toggle on first paint.
+    _nextChordPanel.setSearchQuery(_keyScaleSelector.getSearchQuery());
+    _nextChordPanel.setSearchScope(
+        _keyScaleSelector.getSearchScope() == component::KeyScaleSelector::SearchScope::All
+            ? theory::NextChordGenerator::Pool::All
+            : theory::NextChordGenerator::Pool::Predicted);
     refreshScaleSuggestions();
 
     // Drag handles between browser|next-chords and next-chords|progression. Both adjacent rows
@@ -253,11 +260,18 @@ void AppLayout::onSearchChanged(const std::string& query,
                                 component::KeyScaleSelector::SearchMode mode,
                                 component::KeyScaleSelector::SearchScope scope)
 {
-    juce::ignoreUnused(query, mode, scope);
+    juce::ignoreUnused(mode);
 
     updateSuggestionPanelVisibility();
-    // Mode / scope / query changes re-pull key, scale, and the current chord so Scale mode
-    // never keeps a stale ranking after the chord context moved under Chord mode.
+
+    // Chord mode: All = full catalogue search; off = filter the current next-chord suggestions.
+    _nextChordPanel.setSearchQuery(query);
+    _nextChordPanel.setSearchScope(
+        scope == component::KeyScaleSelector::SearchScope::All
+            ? theory::NextChordGenerator::Pool::All
+            : theory::NextChordGenerator::Pool::Predicted);
+
+    // Scale mode: same All/Predicted semantics for the scale-suggestion list.
     refreshScaleSuggestions();
 }
 
@@ -415,15 +429,19 @@ void AppLayout::playChordToSynthAndHost(const theory::Chord& chord)
     _lastPreviewChord = voiced;
 }
 
-void AppLayout::setCurrentChordForSuggestions(const theory::Chord& chord, bool pinCurrent)
+void AppLayout::setCurrentChordForSuggestions(const theory::Chord& chord,
+                                              bool pinCurrent,
+                                              int timelineBlockId)
 {
     _nextChordCurrentPinned = pinCurrent;
 
     const auto key = _keyScaleSelector.getKey();
     const auto scale = _keyScaleSelector.getScale();
     const auto& keyScale = theory::ChordDatabase::getInstance().get(key, scale);
-    auto sequence = theory::buildSequenceContext(
-        _progressionEditor.getMidiEditorState(), keyScale, &chord);
+    const auto midiState = _progressionEditor.getMidiEditorState();
+    auto sequence = timelineBlockId >= 0
+        ? theory::buildSequenceContextBeforeBlock(midiState, keyScale, timelineBlockId)
+        : theory::buildSequenceContext(midiState, keyScale, &chord);
 
     _nextChordPanel.setCurrentChord(chord, std::move(sequence));
     _scaleSuggestionPanel.setCurrentChord(chord);
@@ -539,29 +557,35 @@ void AppLayout::onProgressionDragStarted()
         dragContainer->performExternalDragDropOfFiles({ midiFile.getFullPathName() }, false);
 }
 
-void AppLayout::onChordBlockPreviewRequested(const std::vector<int>& midiNotes)
+void AppLayout::onChordBlockPreviewRequested(const std::vector<int>& midiNotes,
+                                             const theory::Chord& chord,
+                                             int blockId)
 {
-    _audioProcessor.getSynthEngine().previewChord(midiNotes);
-    _audioProcessor.getHostMidiEmitter().playChord(midiNotes, 1000);
+    // Audition the live roll notes when present; otherwise voice the frozen drop-time chord.
+    if (!midiNotes.empty())
+    {
+        _audioProcessor.getSynthEngine().previewChord(midiNotes);
+        _audioProcessor.getHostMidiEmitter().playChord(midiNotes, 1000);
+    }
+    else if (!chord.notes.empty())
+    {
+        playChordToSynthAndHost(chord);
+    }
+
+    // Pin next-chord / scale suggestions on the clicked lane chord, with history before that block.
+    if (!chord.notes.empty())
+    {
+        setCurrentChordForSuggestions(chord, true, blockId);
+        return;
+    }
 
     if (midiNotes.empty())
         return;
 
-    // Prefer the last progression block's frozen chord if its notes match this preview.
-    const auto key = _keyScaleSelector.getKey();
-    const auto scale = _keyScaleSelector.getScale();
-    const auto& keyScale = theory::ChordDatabase::getInstance().get(key, scale);
-    const auto timeline = theory::buildProgressionTimeline(
-        _progressionEditor.getMidiEditorState(), keyScale);
-    if (timeline.last() != nullptr)
-    {
-        setCurrentChordForSuggestions(timeline.last()->chord, true);
-        return;
-    }
-
-    theory::Chord chord;
-    chord.readableName = "preview";
-    chord.symbol = "preview";
+    // Legacy fallback when the block has no frozen harmony and no reconstructable notes map.
+    theory::Chord reconstructed;
+    reconstructed.readableName = "preview";
+    reconstructed.symbol = "preview";
     int role = 1;
     std::set<int> seen;
     for (const int midi : midiNotes)
@@ -572,11 +596,11 @@ void AppLayout::onChordBlockPreviewRequested(const std::vector<int>& midiNotes)
         static constexpr const char* kNames[12] = {
             "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
         };
-        chord.notes.push_back(theory::NoteName { kNames[pc], kNames[pc], role });
+        reconstructed.notes.push_back(theory::NoteName { kNames[pc], kNames[pc], role });
         role = role == 1 ? 3 : (role == 3 ? 5 : (role == 5 ? 7 : role + 1));
     }
-    if (!chord.notes.empty())
-        setCurrentChordForSuggestions(chord, true);
+    if (!reconstructed.notes.empty())
+        setCurrentChordForSuggestions(reconstructed, true, blockId);
 }
 
 void AppLayout::onContentChanged()

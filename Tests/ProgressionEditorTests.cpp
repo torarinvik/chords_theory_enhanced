@@ -46,8 +46,11 @@ namespace
         }
         void onProgressionDragStarted() override {}
         void onContentChanged() override { ++contentChangedCount; }
-        void onChordBlockPreviewRequested(const std::vector<int>& midiNotes) override
+        void onChordBlockPreviewRequested(const std::vector<int>& midiNotes,
+                                          const theory::Chord& chord,
+                                          int blockId) override
         {
+            juce::ignoreUnused(chord, blockId);
             ++chordPreviewCount;
             lastPreviewNotes = midiNotes;
         }

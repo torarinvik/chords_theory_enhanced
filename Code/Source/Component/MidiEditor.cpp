@@ -1262,7 +1262,9 @@ void MidiEditor::mouseUp(const juce::MouseEvent& event)
             if (getPeer() != nullptr)
                 grabKeyboardFocus();
 
-            const auto blockId = _chordBlocks[static_cast<std::size_t>(finishedChordIndex)].id;
+            const auto& clickedBlock = _chordBlocks[static_cast<std::size_t>(finishedChordIndex)];
+            const auto blockId = clickedBlock.id;
+            const auto chord = harmonyForChordBlock(clickedBlock);
             std::vector<int> midiNotes;
             midiNotes.reserve(4);
             for (const auto& note : _notes)
@@ -1273,7 +1275,7 @@ void MidiEditor::mouseUp(const juce::MouseEvent& event)
             std::sort(midiNotes.begin(), midiNotes.end());
 
             for (auto* listener : _listeners)
-                listener->onChordBlockPreviewRequested(midiNotes);
+                listener->onChordBlockPreviewRequested(midiNotes, chord, blockId);
             repaint();
             return;
         }

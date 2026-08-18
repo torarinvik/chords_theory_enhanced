@@ -1,6 +1,7 @@
 #include "Theory/NextChordGenerator.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <map>
 #include <numeric>
@@ -59,6 +60,44 @@ namespace
         return c.rankingScore
             - 0.55f * c.metrics.complexity
             + NextChordScorer::ideaRepresentativeBonus(c.chord);
+    }
+
+    std::string toLower(std::string s)
+    {
+        std::transform(s.begin(), s.end(), s.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return s;
+    }
+
+    bool matchesQuery(const NextChordCandidate& candidate, const std::string& queryLower)
+    {
+        if (queryLower.empty())
+            return true;
+
+        auto contains = [&](const std::string& hay)
+        {
+            return toLower(hay).find(queryLower) != std::string::npos;
+        };
+
+        return contains(candidate.chord.readableName)
+            || contains(candidate.chord.symbol)
+            || contains(candidate.reasonLabel);
+    }
+
+    void applyQueryAndCap(std::vector<NextChordCandidate>& candidates,
+                          const std::string& query,
+                          int maxResults)
+    {
+        const auto queryLower = toLower(query);
+        if (!queryLower.empty())
+        {
+            candidates.erase(std::remove_if(candidates.begin(), candidates.end(),
+                                  [&](const NextChordCandidate& c) { return !matchesQuery(c, queryLower); }),
+                             candidates.end());
+        }
+
+        if (maxResults > 0 && static_cast<int>(candidates.size()) > maxResults)
+            candidates.resize(static_cast<std::size_t>(maxResults));
     }
 
     bool isMainListIdea(const NextChordCandidate& c, const Chord& current)
@@ -168,11 +207,20 @@ namespace
     }
 }
 
-std::vector<NextChordCandidate> NextChordGenerator::generate(const Chord& currentChord, const KeyScaleData& keyScale,
-                                                             float drama01, const SequenceContext& sequence)
+std::vector<NextChordCandidate> NextChordGenerator::generate(const Chord& currentChord,
+                                                             const KeyScaleData& keyScale,
+                                                             float drama01,
+                                                             const SequenceContext& sequence,
+                                                             Pool pool,
+                                                             const std::string& query,
+                                                             int maxResults)
 {
     if (currentChord.notes.empty())
+    {
+        if (pool == Pool::All)
+            return generateCatalogue(keyScale, query, maxResults);
         return {};
+    }
 
     std::vector<NextChordCandidate> candidates;
     std::set<VoicingKey> seenVoicings;
@@ -268,8 +316,43 @@ std::vector<NextChordCandidate> NextChordGenerator::generate(const Chord& curren
             candidate.rankingScore -= 1.10f;
     }
 
-    // 5) Destination-first: one representative per harmonic *idea* family.
-    //    Only complete-move candidates compete (no C5/Csus2/A5 as top-level faces).
+    auto byRanking = [](const NextChordCandidate& a, const NextChordCandidate& b)
+    {
+        if (std::abs(a.rankingScore - b.rankingScore) > 1.0e-5f)
+            return a.rankingScore > b.rankingScore;
+        if (a.fitPercent != b.fitPercent)
+            return a.fitPercent > b.fitPercent;
+        if (std::abs(a.metrics.complexity - b.metrics.complexity) > 1.0e-5f)
+            return a.metrics.complexity < b.metrics.complexity;
+        return a.chord.symbol < b.chord.symbol;
+    };
+
+    // 5) Predicted: destination-first family collapse. All: full scored catalogue.
+    std::vector<NextChordCandidate> result;
+    if (pool == Pool::All)
+    {
+        result = std::move(candidates);
+        // Empty query: root-position faces only (browsable). Non-empty query may match inversions
+        // (e.g. "C/E") so keep every voicing that will be filtered by name/symbol next.
+        if (query.empty())
+        {
+            result.erase(std::remove_if(result.begin(), result.end(),
+                              [](const NextChordCandidate& c)
+                              {
+                                  if (c.chord.notes.empty())
+                                      return true;
+                                  const int root = NextChordScorer::rootPitchClass(c.chord);
+                                  const int bass = NextChordScorer::bassPitchClass(c.chord);
+                                  return root != bass;
+                              }),
+                         result.end());
+        }
+        std::stable_sort(result.begin(), result.end(), byRanking);
+        applyQueryAndCap(result, query, maxResults);
+        return result;
+    }
+
+    // Only complete-move candidates compete (no C5/Csus2/A5 as top-level faces).
     std::map<FamilyKey, std::size_t> bestIndexByFamily;
     for (std::size_t i = 0; i < candidates.size(); ++i)
     {
@@ -293,28 +376,63 @@ std::vector<NextChordCandidate> NextChordGenerator::generate(const Chord& curren
         }
     }
 
-    std::vector<NextChordCandidate> diverse;
-    diverse.reserve(bestIndexByFamily.size());
+    result.reserve(bestIndexByFamily.size());
     for (const auto& [key, index] : bestIndexByFamily)
     {
         (void)key;
-        diverse.push_back(std::move(candidates[index]));
+        result.push_back(std::move(candidates[index]));
     }
 
-    // 6) Final destination order (moves only).
-    std::stable_sort(diverse.begin(), diverse.end(),
+    // 6) Final destination order (moves only), then optional search filter.
+    std::stable_sort(result.begin(), result.end(), byRanking);
+    // Predicted lists are already short; only cap when the caller asks for a hard limit and
+    // a query is active (avoid silently truncating the full suggestion column).
+    applyQueryAndCap(result, query, query.empty() ? 0 : maxResults);
+    return result;
+}
+
+std::vector<NextChordCandidate> NextChordGenerator::generateCatalogue(const KeyScaleData& keyScale,
+                                                                      const std::string& query,
+                                                                      int maxResults)
+{
+    std::vector<NextChordCandidate> candidates;
+    candidates.reserve(static_cast<std::size_t>(TriadLibrary::kNumRootPositionChords));
+
+    static constexpr TriadQuality kQualities[TriadLibrary::kNumQualities] = {
+        TriadQuality::Major,
+        TriadQuality::Minor,
+        TriadQuality::Diminished,
+        TriadQuality::Augmented,
+        TriadQuality::Sus2,
+        TriadQuality::Sus4,
+        TriadQuality::Power,
+        TriadQuality::Major7,
+        TriadQuality::Minor7,
+        TriadQuality::Dominant7,
+        TriadQuality::HalfDim7,
+    };
+
+    for (int root = 0; root < TriadLibrary::kNumRoots; ++root)
+    {
+        for (const auto quality : kQualities)
+        {
+            NextChordCandidate candidate;
+            candidate.chord = TriadLibrary::makeTriad(root, quality, keyScale.key, 0);
+            candidate.chord = NextChordScorer::spellInKeyContext(candidate.chord, keyScale);
+            candidate.degree = matchingDegree(candidate.chord, keyScale);
+            candidate.rankingScore = 0.0f;
+            candidates.push_back(std::move(candidate));
+        }
+    }
+
+    std::stable_sort(candidates.begin(), candidates.end(),
         [](const NextChordCandidate& a, const NextChordCandidate& b)
         {
-            if (std::abs(a.rankingScore - b.rankingScore) > 1.0e-5f)
-                return a.rankingScore > b.rankingScore;
-            if (a.fitPercent != b.fitPercent)
-                return a.fitPercent > b.fitPercent;
-            if (std::abs(a.metrics.complexity - b.metrics.complexity) > 1.0e-5f)
-                return a.metrics.complexity < b.metrics.complexity;
-            return a.chord.symbol < b.chord.symbol;
+            return a.chord.readableName < b.chord.readableName;
         });
 
-    return diverse;
+    applyQueryAndCap(candidates, query, maxResults);
+    return candidates;
 }
 
 }

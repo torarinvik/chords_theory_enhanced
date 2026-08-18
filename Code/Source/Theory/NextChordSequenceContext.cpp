@@ -214,6 +214,28 @@ SequenceContext buildSequenceContext(const MidiEditorState& state,
     return ctx;
 }
 
+SequenceContext buildSequenceContextBeforeBlock(const MidiEditorState& state,
+                                                const KeyScaleData& keyScale,
+                                                int blockId)
+{
+    const auto timeline = buildProgressionTimeline(state, keyScale);
+    SequenceContext ctx;
+
+    for (int i = 0; i < static_cast<int>(timeline.events.size()); ++i)
+    {
+        if (timeline.events[static_cast<std::size_t>(i)].blockId != blockId)
+            continue;
+
+        if (i > 0)
+            ctx.previous.assign(timeline.events.begin(),
+                                timeline.events.begin() + i);
+        ctx.trim();
+        return ctx;
+    }
+
+    return ctx;
+}
+
 SequenceContext buildSequenceContextBeforeLast(const MidiEditorState& state,
                                                const KeyScaleData& keyScale)
 {

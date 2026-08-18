@@ -1,5 +1,6 @@
 #include "Component/NextChordPanel.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include "Theory/ChordDatabase.h"
@@ -291,6 +292,22 @@ void NextChordPanel::setCurrentChord(const theory::Chord& chord, theory::Sequenc
     regenerate();
 }
 
+void NextChordPanel::setSearchQuery(const std::string& query)
+{
+    if (_searchQuery == query)
+        return;
+    _searchQuery = query;
+    regenerate();
+}
+
+void NextChordPanel::setSearchScope(theory::NextChordGenerator::Pool pool)
+{
+    if (_searchPool == pool)
+        return;
+    _searchPool = pool;
+    regenerate();
+}
+
 void NextChordPanel::setDrama01(float drama01)
 {
     drama01 = juce::jlimit(0.0f, 1.0f, drama01);
@@ -320,7 +337,8 @@ void NextChordPanel::sliderValueChanged(juce::Slider* slider)
     }
 
     const auto& keyScale = theory::ChordDatabase::getInstance().get(_key, _scale);
-    _theoryCandidates = theory::NextChordGenerator::generate(*_currentChord, keyScale, _drama01, _sequence);
+    _theoryCandidates = theory::NextChordGenerator::generate(
+        *_currentChord, keyScale, _drama01, _sequence, _searchPool, _searchQuery);
     _theoryListContent.rebuildRows(_theoryCandidates);
     _theoryViewport.setViewPosition(0, 0);
     repaint();
@@ -357,9 +375,15 @@ void NextChordPanel::regenerate()
     _aiCandidates.clear();
     _aiEmptyHint.setText("");
 
+    const auto& keyScale = theory::ChordDatabase::getInstance().get(_key, _scale);
+
     if (!_currentChord)
     {
         _currentLabel.setText(juce::translate("next_chord_empty_hint").toStdString());
+        // All scope still lets the user browse/search the full catalogue with no "from" chord.
+        if (_searchPool == theory::NextChordGenerator::Pool::All)
+            _theoryCandidates = theory::NextChordGenerator::generateCatalogue(
+                keyScale, _searchQuery);
         rebuildLists();
         repaint();
         return;
@@ -371,15 +395,28 @@ void NextChordPanel::regenerate()
             .replace("%n", juce::String(_sequence.size()));
     _currentLabel.setText(currentText.toStdString());
 
-    const auto& keyScale = theory::ChordDatabase::getInstance().get(_key, _scale);
+    // Left: pure symbolic ranking (Drama applies here only). Search scope + query apply here.
+    _theoryCandidates = theory::NextChordGenerator::generate(
+        *_currentChord, keyScale, _drama01, _sequence, _searchPool, _searchQuery);
 
-    // Left: pure symbolic ranking (Drama applies here only).
-    _theoryCandidates = theory::NextChordGenerator::generate(*_currentChord, keyScale, _drama01, _sequence);
-
-    // Right: pure AI ranking (no theory blend, no Drama).
+    // Right: pure AI ranking (no theory blend, no Drama). Always suggestion-pool; still honor query.
     if (theory::NextChordAiGenerator::isAvailable())
     {
         _aiCandidates = theory::NextChordAiGenerator::generate(*_currentChord, keyScale, _sequence);
+        if (!_searchQuery.empty())
+        {
+            const auto q = _searchQuery;
+            _aiCandidates.erase(
+                std::remove_if(_aiCandidates.begin(), _aiCandidates.end(),
+                    [&](const theory::NextChordCandidate& c)
+                    {
+                        const auto name = juce::String(c.chord.readableName).toLowerCase();
+                        const auto symbol = juce::String(c.chord.symbol).toLowerCase();
+                        const auto needle = juce::String(q).toLowerCase();
+                        return !name.contains(needle) && !symbol.contains(needle);
+                    }),
+                _aiCandidates.end());
+        }
         if (_aiCandidates.empty())
             _aiEmptyHint.setText(juce::translate("next_chord_ai_fallback_hint").toStdString());
     }
