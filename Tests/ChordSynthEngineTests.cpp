@@ -41,6 +41,24 @@ TEST_CASE("ChordSynthEngine::previewChord produces audible output while sounding
     CHECK(buffer.getMagnitude(0, kBlockSize) > 0.0f);
 }
 
+TEST_CASE("ChordSynthEngine::previewChord injects a one-shot note-on into the next audio block", "[ChordSynthEngine]")
+{
+    ChordSynthEngine engine;
+    engine.prepare(kSampleRate, kBlockSize);
+    engine.previewChord({ 60, 64, 67 });
+
+    juce::AudioBuffer<float> buffer(2, kBlockSize);
+    juce::MidiBuffer midi;
+    engine.renderNextBlock(buffer, midi, 0, kBlockSize);
+
+    int noteOns = 0;
+    for (const auto metadata : midi)
+        if (metadata.getMessage().isNoteOn())
+            ++noteOns;
+
+    CHECK(noteOns == 3);
+}
+
 TEST_CASE("ChordSynthEngine::previewChord with no notes is a safe, silent no-op", "[ChordSynthEngine]")
 {
     ChordSynthEngine engine;
@@ -78,11 +96,8 @@ TEST_CASE("ChordSynthEngine::previewChord auto-releases and falls silent after i
     juce::MessageManager::getInstance()->runDispatchLoopUntil(1100);
 
     // Render enough further blocks to carry the release tail (~0.2s) all the way to silence.
-    // midi must be cleared before every call - MidiKeyboardState::processNextMidiBuffer doesn't
-    // consume/clear the caller's buffer, so a reused, never-cleared MidiBuffer would keep
-    // re-delivering the very first noteOn on every call, perpetually retriggering the voices (in
-    // real host use this never happens, since the host hands processBlock a fresh buffer every
-    // callback).
+    // midi must be cleared before every call because the render path appends generated preview
+    // events to the caller-owned buffer (in real host use this is already fresh every callback).
     float lastMagnitude = 0.0f;
     for (int i = 0; i < 20; ++i)
     {
